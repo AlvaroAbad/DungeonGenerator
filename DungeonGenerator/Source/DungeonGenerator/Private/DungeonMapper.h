@@ -204,7 +204,7 @@ private:
 	UFUNCTION(CallInEditor, BlueprintCallable, Category = "Dungeon Mapper|Generators")
 	void SimplifyConnections();
 	UFUNCTION(CallInEditor, BlueprintCallable, Category = "Dungeon Mapper|Generators")
-	void collapse();
+	void Collapse();
 	UDungeonHallwayData* CreateHallwayEdgePoint(UDungeonRoomData* ConnectedRoom, FVector Start, FVector End);
 	UFUNCTION(CallInEditor, BlueprintCallable, Category = "Dungeon Mapper|Generators")
 	void CreateHallways();

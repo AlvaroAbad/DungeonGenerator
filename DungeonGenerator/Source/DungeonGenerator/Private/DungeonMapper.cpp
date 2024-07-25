@@ -550,7 +550,7 @@ void ADungeonMapper::SimplifyConnections()
 	FurthestRoom->RoomType = ERoomType::End;
 }
 
-void ADungeonMapper::collapse()
+void ADungeonMapper::Collapse()
 {
 	bIsCollapsing = true;
 	CollapsingIterationNotModified = 0;
@@ -582,9 +582,9 @@ UDungeonHallwayData* ADungeonMapper::CreateHallwayEdgePoint(UDungeonRoomData* Co
 void ADungeonMapper::CreateHallways()
 {
 	DungeonHallwaysData.Empty();
-	bIsCreatingHallways = true;
-	ConnectionID = 0;
-	return;
+	//bIsCreatingHallways = true;
+	//ConnectionID = 0;
+	//return;
 	//creating hallways based on room connections
 	for (const FDungeonConnection& Connection : DungeonConnections)
 	{
