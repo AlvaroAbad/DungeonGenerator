@@ -19,6 +19,7 @@ class UProceduralMeshComponent;
 struct FDungeonNode;
 struct FDungeonConnection;
 class ANavMeshBoundsVolume;
+class UDungeonHallwayPathFinder;
 
 DECLARE_LOG_CATEGORY_EXTERN(LogDungeonGenerator, Log, All);
 
@@ -30,6 +31,12 @@ DECLARE_CYCLE_STAT_EXTERN(TEXT("Dungeon Mapper / Connect Rooms"), STAT_ConnectRo
 DECLARE_CYCLE_STAT_EXTERN(TEXT("Dungeon Mapper / Simplify Connections"), STAT_SimplifyConections, STATGROUP_ProcDungeon, DUNGEONGENERATOR_API);
 DECLARE_CYCLE_STAT_EXTERN(TEXT("Dungeon Mapper / Render Dungeon"), STAT_RenderDungeon, STATGROUP_ProcDungeon, DUNGEONGENERATOR_API);
 
+UENUM(blueprintType)
+enum class EHallwayGenerationMethod : uint8
+{
+	Basic,
+	PathFinding
+};
 USTRUCT()
 struct FDungeonPath
 {
@@ -143,45 +150,6 @@ struct FHallWayPathNode
 	}
 };
 
-USTRUCT()
-struct FHallWayPathFinder
-{
-	GENERATED_BODY()
-public:
-	FVector GridStartingLocation;
-	FVector CellExtend;
-	FVector MaxCells;
-	TArray<FHallWayPath> Paths;
-private:
-	TArray<FHallWayPathNode> OpenRooms;
-	TArray<FHallWayPathNode> ClosedRooms;
-	FHallWayPath CurrentPath;
-public:
-	FHallWayPathFinder()
-		:GridStartingLocation(FVector::ZeroVector),
-		  CellExtend(FVector::ZeroVector),
-		  MaxCells(FVector::ZeroVector)
-	{
-		
-	}
-	
-	FHallWayPathFinder(const FVector& GridStartingLocation, const FVector& CellExtend, const FVector& MaxCells)
-			: GridStartingLocation(GridStartingLocation),
-			  CellExtend(CellExtend),
-			  MaxCells(MaxCells)
-	{
-	}
-	
-	void CalculateHallwayPath(const FVector& StartingPoint, const FVector& EndPoint);
-	bool EvaluateNextNode();
-	void DebugRender(UWorld* World);
-
-private:
-	FVector FromWorldToGridCoord(const FVector& WorldCoord) const;
-	FVector FromGridToWorldCoord(FVector Front) const;
-	void FillConnectedCells(const FHallWayPathNode& CurrentCell, const FVector& CurrentCellGridCoord, TArray<FHallWayPathNode>& OutConnectedRooms) const;
-};
-
 UCLASS(BlueprintType, Blueprintable)
 class DUNGEONGENERATOR_API ADungeonMapper : public AActor
 {
@@ -192,7 +160,10 @@ public:
 	virtual bool ShouldTickIfViewportsOnly() const override { return true; };
 
 	virtual void Tick(float DeltaSeconds) override;
-	
+
+	//Override - AActor - START
+	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
+	//Override - AActor - END
 private:
 	void RunHallwaysCreation();
 	void RunPhysics(float DeltaSeconds);
@@ -205,7 +176,7 @@ private:
 	void SimplifyConnections();
 	UFUNCTION(CallInEditor, BlueprintCallable, Category = "Dungeon Mapper|Generators")
 	void Collapse();
-	UDungeonHallwayData* CreateHallwayEdgePoint(UDungeonRoomData* ConnectedRoom, FVector Start, FVector End);
+	UDungeonHallwayData* CreateConnectionFromEdgePoint(UDungeonRoomData* ConnectedRoom, FVector Start, FVector End);
 	UFUNCTION(CallInEditor, BlueprintCallable, Category = "Dungeon Mapper|Generators")
 	void CreateHallways();
 	UFUNCTION(CallInEditor, BlueprintCallable, Category = "Dungeon Mapper|Generators")
@@ -223,6 +194,8 @@ private:
 
 	//Hallway Creation
 	UDungeonHallwayData* FixHallwayCrossingRoom(UDungeonRoomData* Room, const FVector& Start, const FVector& End);
+	bool HasHallwayReachedDestination(const FHallWayPathNode& PathNode, FVector& Out_HitPoint, FVector& Out_HitNormal);
+	void CreateHallwaysFromPath(const TArray<FVector>& Path);
 	
 	//Rendering
 	void RenderHallWays(UDynamicMesh* DynMesh, const UDungeonHallwayData* DungeonHallway);
@@ -252,6 +225,8 @@ public:
 	FName RandomSeed;
 	UPROPERTY(EditAnywhere, category = "Dungeon Mapper|Generation")
 	float MaxHallwaySlope = 45.0f;
+	UPROPERTY(EditAnywhere, category = "Dungeon Mapper|Generation")
+	EHallwayGenerationMethod HallWayGenerationMethod = EHallwayGenerationMethod::Basic;
 	UPROPERTY(EditAnywhere, category = "Dungeon Mapper|Generation|Physics")
 	float SpringConstant = 1.0f;
 	UPROPERTY(EditAnywhere, category = "Dungeon Mapper|Generation|Physics")
@@ -283,7 +258,8 @@ public:
 	bool bApplySpringForce;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, category = "Dungeon Mapper|Debug")
 	TMap<ECorridorType, FColor> HallwayDebugColors;
-
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, category = "Dungeon Mapper|Debug")
+	float TickInterval = 0.0f;
 
 protected:
 	
@@ -303,9 +279,14 @@ protected:
 	TObjectPtr<UDynamicMeshPool> DynamicMeshPool;
 	FGeometryScriptSimpleCollision DungeonCollision;
 
+	//Collapsing Variables
 	bool bIsCollapsing = false;
 	int32 CollapsingIterationNotModified = 0;
+
+	//HallCreation Variables
 	bool bIsCreatingHallways = false;
 	int32 ConnectionID = 0;
-	TArray<FVector> HallWayPaths;
+	UPROPERTY()
+	UDungeonHallwayPathFinder* DungeonHallwayPathFinder = nullptr;
+
 };

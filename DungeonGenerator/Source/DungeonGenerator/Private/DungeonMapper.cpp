@@ -3,6 +3,7 @@
 
 #include "DungeonMapper.h"
 
+#include "DungeonPathFinder.h"
 #include "DungeonRoom.h"
 #include "GeometryScriptLibrary_DungeonGenerationFunctions.h"
 #include "NavigationSystem.h"
@@ -29,7 +30,8 @@ ADungeonMapper::ADungeonMapper(const FObjectInitializer& ObjectInitializer)
 {
 	PrimaryActorTick.bCanEverTick = true;
 	PrimaryActorTick.bStartWithTickEnabled = true;
-
+	PrimaryActorTick.TickInterval = TickInterval;
+	
 	DynamicMeshComponent = CreateDefaultSubobject<UDynamicMeshComponent>(TEXT("DynamicMeshComponent"));
 	RootComponent = DynamicMeshComponent;
 
@@ -38,6 +40,8 @@ ADungeonMapper::ADungeonMapper(const FObjectInitializer& ObjectInitializer)
 	{
 		HallwayDebugColors.Add(Type, FColor::Orange);
 	}
+
+	DungeonHallwayPathFinder = NewObject<UDungeonHallwayPathFinder>(this, TEXT("HallWayPathFinder"));
 }
 
 void ADungeonMapper::Tick(float DeltaSeconds)
@@ -48,44 +52,259 @@ void ADungeonMapper::Tick(float DeltaSeconds)
 	Debug();
 }
 
-void ADungeonMapper::RunHallwaysCreation()
+void ADungeonMapper::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)
 {
-	if(bIsCreatingHallways && !DungeonConnections.IsEmpty())
+	Super::PostEditChangeProperty(PropertyChangedEvent);
+	
+	static const FName Name_TickInterval = GET_MEMBER_NAME_CHECKED(ADungeonMapper, TickInterval);
+	
+	FProperty* MemberPropertyThatChanged = PropertyChangedEvent.MemberProperty;
+	const FName MemberPropertyName = MemberPropertyThatChanged != NULL ? MemberPropertyThatChanged->GetFName() : NAME_None;
+	if(MemberPropertyName == Name_TickInterval)
 	{
-		if(ConnectionID< 0 && ConnectionID > DungeonConnections.Num())
-		{
-			bIsCreatingHallways = false;
-		}
+		PrimaryActorTick.TickInterval = TickInterval;
+	}	
+}
 
-		FDungeonConnection& EvaluatedConnection = DungeonConnections[ConnectionID];
-		if(HallWayPaths.IsEmpty())
-		{
-			FVector PossibleRoomExitsDirections[4];
-			PossibleRoomExitsDirections[0] = FVector::ForwardVector;
-			PossibleRoomExitsDirections[1] = FVector::BackwardVector;
-			PossibleRoomExitsDirections[2] = FVector::RightVector;
-			PossibleRoomExitsDirections[3] = FVector::LeftVector;
-
-			const FVector ConnectionStart = EvaluatedConnection.StartRoom->Location;
-			const FVector ConnectionEnd = EvaluatedConnection.EndRoom->Location;
-
-			float ShortestDistanceToEndConnection = MAX_FLT;
-			for (int i = 0; i < 4; ++i)
-			{
-				FVector ExitPoint = ConnectionStart + PossibleRoomExitsDirections[i] * (EvaluatedConnection.StartRoom->Extent);
-				float DistanceToEndConnection = FVector::DistSquared(ExitPoint, ConnectionEnd);
+void ADungeonMapper::CreateHallwaysFromPath(const TArray<FVector>& Path)
+{
+	for (int i = 0; i <Path.Num() - 1; ++i)
+	{
+		UDungeonHallwayData* NewHallway = DuplicateObject(HallwayData, this);
+		NewHallway->Start = Path[i];
+		NewHallway->End = Path[i + 1];
+		NewHallway->Direction = (NewHallway->End - NewHallway->Start).GetSafeNormal();
+		const bool IsStairs = (NewHallway->End.Z - NewHallway->Start.Z) != 0;
+		NewHallway->Type = IsStairs ? ECorridorType::Stairs : ECorridorType::HStraight;
 			
-				if(DistanceToEndConnection < ShortestDistanceToEndConnection)
+		DungeonHallwaysData.AddUnique(NewHallway);
+	}
+
+	if(bPreventCrossing)
+	{
+		TArray< UDungeonHallwayData*> NewHallways;
+		for (UDungeonHallwayData* HallWay : DungeonHallwaysData)
+		{
+			for (UDungeonRoomData* Room : DungeonNodes)
+			{
+					UDungeonHallwayData* NewHallway = FixHallwayCrossingRoom(Room,  HallWay->Start, HallWay->End);
+					if(NewHallway)
+					{
+						NewHallways.AddUnique(NewHallway);
+						HallWay->bIsInvalid = true;
+	
+						UDungeonHallwayData* NewHallwayConnection = CreateConnectionFromEdgePoint(Room, NewHallway->End, NewHallway->Start);
+						if(NewHallwayConnection)
+						{
+							NewHallways.AddUnique(NewHallwayConnection);
+						}
+					}
+	
+					NewHallway = FixHallwayCrossingRoom(Room,  HallWay->End, HallWay->Start);
+					if(NewHallway)
+					{
+						NewHallways.AddUnique(NewHallway);
+						HallWay->bIsInvalid = true;
+	
+						UDungeonHallwayData* NewHallwayConnection = CreateConnectionFromEdgePoint(Room,NewHallway->End, NewHallway->Start);
+						if(NewHallwayConnection)
+						{
+							NewHallways.AddUnique(NewHallwayConnection);
+						}
+					}
+				}
+		}
+	
+		
+		DungeonHallwaysData.RemoveAll([](const UDungeonHallwayData* OtherHallWay)
+			{
+				return OtherHallWay->bIsInvalid;
+			});
+		DungeonHallwaysData.Append(NewHallways);
+	}
+
+	//Merge Hallways that fallow the same path
+	int32 NumHallways = DungeonHallwaysData.Num();
+	for (int i = 0; i < NumHallways; ++i)
+	{
+		UDungeonHallwayData* FirstHallway = DungeonHallwaysData[i];
+		if(FirstHallway->Type != ECorridorType::HStraight && FirstHallway->Type != ECorridorType::Stairs)
+		{
+			continue;
+		}
+		for (int j = i + 1; j < NumHallways; ++j)
+		{
+			UDungeonHallwayData* SecondHallway = DungeonHallwaysData[j];
+			if(SecondHallway->Type != ECorridorType::HStraight && SecondHallway->Type != ECorridorType::Stairs)
+			{
+				continue;
+			}
+
+
+			bool AreColinear = FirstHallway->Direction.GetAbs().Equals(SecondHallway->Direction.GetAbs());
+			if(!AreColinear)
+			{
+				continue;
+			}
+			
+			const FVector FirstInvertedDirection(!FirstHallway->Direction.X,!FirstHallway->Direction.Y, !FirstHallway->Direction.Z);
+			const FVector SecondInvertedDirection(!SecondHallway->Direction.X,!SecondHallway->Direction.Y, !SecondHallway->Direction.Z);
+			const FVector FirstNegatedStart = FirstHallway->Start*FirstInvertedDirection;
+			const FVector SecondNegatedStart = SecondHallway->Start*SecondInvertedDirection;
+			if(!FirstNegatedStart.Equals(SecondNegatedStart))
+			{
+				continue;
+			}
+
+			if(FirstHallway->Direction.Equals(SecondHallway->Direction))
+			{
+				if(FirstHallway->Start.Equals(SecondHallway->End))
 				{
-					ShortestDistanceToEndConnection = DistanceToEndConnection;
-					HallWayPaths.Add(ConnectionStart + PossibleRoomExitsDirections[i] * EvaluatedConnection.StartRoom->Extent);
-					HallWayPaths.Add(HallWayPaths[0] + PossibleRoomExitsDirections[i] * HallwayData->HallWaySectionDimensions.X);
+					FirstHallway->Start = SecondHallway->Start;
+					SecondHallway->bIsInvalid = true;
+				}
+				else if(FirstHallway->End.Equals(SecondHallway->Start))
+				{
+					FirstHallway->End = SecondHallway->End;
+					SecondHallway->bIsInvalid = true;
+				}
+				else if(FirstHallway->Start.Equals(SecondHallway->Start) || FirstHallway->End.Equals(SecondHallway->End))
+				{
+					if(FVector::Dist(FirstHallway->Start, FirstHallway->End) > FVector::Dist(SecondHallway->Start, SecondHallway->End))
+					{
+						SecondHallway->bIsInvalid = true;
+					}
+					else
+					{
+						FirstHallway->bIsInvalid = true;
+					}
 				}
 			}
+			else
+			{
+				if(FirstHallway->Start.Equals(SecondHallway->Start))
+				{
+					FirstHallway->Start = SecondHallway->End;
+					SecondHallway->bIsInvalid = true;
+				}
+				else if(FirstHallway->End.Equals(SecondHallway->End))
+				{
+					FirstHallway->End = SecondHallway->Start;
+					SecondHallway->bIsInvalid = true;
+				}
+				else if(FirstHallway->Start.Equals(SecondHallway->End) || FirstHallway->End.Equals(SecondHallway->Start))
+				{
+					if(FVector::Dist(FirstHallway->Start, FirstHallway->End) > FVector::Dist(SecondHallway->Start, SecondHallway->End))
+					{
+						SecondHallway->bIsInvalid = true;
+					}
+					else
+					{
+						FirstHallway->bIsInvalid = true;
+					}
+				}
+			}
+		}
+	}
+
+	DungeonHallwaysData.RemoveAll([](const UDungeonHallwayData* OtherHallWay)
+		{
+			return OtherHallWay->bIsInvalid;
+		});
+	
+	if(bCreateCorners)
+	{
+		/// Create Corner sections of hallways
+	 	NumHallways = DungeonHallwaysData.Num();
+	 	for (int i = 0; i < NumHallways; ++i)
+	 	{
+	 		UDungeonHallwayData* FirstHallway = DungeonHallwaysData[i];
+	 		if(FirstHallway->Type != ECorridorType::HStraight && FirstHallway->Type != ECorridorType::Stairs)
+	 		{
+	 			continue;
+	 		}
+	 		for (int j = i + 1; j < NumHallways; ++j)
+	 		{
+	 			UDungeonHallwayData* SecondHallway = DungeonHallwaysData[j];
+	 			if(SecondHallway->Type != ECorridorType::HStraight && SecondHallway->Type != ECorridorType::Stairs)
+	 			{
+	 				continue;
+	 			}
+
+	 			FVector IntersectionPoint1 = FVector::ZeroVector;
+	 			FVector IntersectionPoint2 = FVector::ZeroVector;
+	 			FMath::SegmentDistToSegmentSafe(FirstHallway->Start, FirstHallway->End, SecondHallway->Start, SecondHallway->End, IntersectionPoint1, IntersectionPoint2);
+	 			bool bIntersect = IntersectionPoint1.Equals(IntersectionPoint2);
+	 			if(bIntersect)
+	 			{
+	 				
+	 				FVector CornerStart;
+	 				FVector CornerPoint = IntersectionPoint1;
+	 				FVector CornerEnd;
+	 				if(FirstHallway->End.Equals(CornerPoint))
+	 				{
+	 					CornerStart = FirstHallway->Start;
+	 					CornerEnd = SecondHallway->End;
+	 				}
+	 				else if(FirstHallway->Start.Equals(CornerPoint))
+	 				{
+	 					CornerStart = SecondHallway->Start;
+	 					CornerEnd = FirstHallway->End;
+	 				}
+	 				else if(SecondHallway->End.Equals(CornerPoint))
+	 				{
+	 					CornerStart = SecondHallway->Start;
+	 					CornerEnd = FirstHallway->End;
+	 				}
+	 				else if(SecondHallway->Start.Equals(CornerPoint))
+	 				{
+	 					CornerStart = FirstHallway->Start;
+	 					CornerEnd = SecondHallway->End;
+	 				}
+				    else
+				    {
+					    continue;
+				    }
+	 				
+	 				FVector HallwayDirection = (CornerPoint - CornerStart).GetSafeNormal();
+	 			
+	 				UDungeonHallwayData* NewCorner = DuplicateObject(HallwayData, this);
+	 				NewCorner->Start = CornerPoint - HallwayDirection * NewCorner->HallWaySectionDimensions.X;
+	 				NewCorner->End = CornerPoint + (CornerEnd - CornerPoint).GetSafeNormal() * NewCorner->HallWaySectionDimensions.X;
+	 				NewCorner->Direction = HallwayDirection;
+	 				const bool IsStairs = (NewCorner->End.Z - NewCorner->Start.Z) != 0;
+	 				NewCorner->Type = IsStairs ? ECorridorType::StairConnection : ECorridorType::HCorner;
+	 				DungeonHallwaysData.AddUnique(NewCorner);
+	 				
+	 			}
+	 		}
+	 	}
+	}
+}
+
+void ADungeonMapper::RunHallwaysCreation()
+{
+	if(bIsCreatingHallways)
+	{
+		if(!DungeonConnections.IsValidIndex(ConnectionID))
+		{
+			bIsCreatingHallways = false;
 			return;
 		}
 		
-		
+		if(DungeonHallwayPathFinder->Evaluate())
+		{
+			CreateHallwaysFromPath(DungeonHallwayPathFinder->PathResult);
+			ConnectionID++;
+			if(DungeonConnections.IsValidIndex(ConnectionID))
+			{
+				DungeonHallwayPathFinder->PathStartLocation = DungeonConnections[ConnectionID].StartRoom->Location;
+				DungeonHallwayPathFinder->StartRoomExtent = DungeonConnections[ConnectionID].StartRoom->Extent;
+				DungeonHallwayPathFinder->EndRoomExtent = DungeonConnections[ConnectionID].EndRoom->Extent;
+				DungeonHallwayPathFinder->FillAdditionalValidConnectionDirections(DungeonConnections[ConnectionID].StartRoom->Location, DungeonConnections[ConnectionID].EndRoom->Location);
+				DungeonHallwayPathFinder->Initialize(DungeonConnections[ConnectionID].StartRoom->Location, DungeonConnections[ConnectionID].EndRoom->Location);
+			}
+		}
 	}
 }
 
@@ -231,10 +450,15 @@ void ADungeonMapper::Debug()
 			default:
 				DungeonColor = FColor::White;
 			}
-			DrawDebugBox(GetWorld(), DungeonsRoom->Location, DungeonsRoom->Extent,DungeonColor, false, -1, 0, 2);
-			DrawDebugDirectionalArrow(GetWorld(), DungeonsRoom->Location, DungeonsRoom->Location + DungeonsRoom->Velocity, 10.0f, FColor::Black, false, -1, 0, 2);
+			DrawDebugBox(GetWorld(), DungeonsRoom->Location, DungeonsRoom->Extent,DungeonColor, false, TickInterval, 0, 2);
+			DrawDebugDirectionalArrow(GetWorld(), DungeonsRoom->Location, DungeonsRoom->Location + DungeonsRoom->Velocity, 10.0f, FColor::Black, false, TickInterval, 0, 2);
 			uint64 InnerKey = GetTypeHash(DungeonsRoom->GetName()+ "Velocity");
 			GEngine->AddOnScreenDebugMessage(InnerKey, 2.0f, FColor::Green, FString::Printf(TEXT("Velocity:  [M]%f | [D]%s"), DungeonsRoom->Velocity.Length(), *DungeonsRoom->Velocity.ToString()));
+			for (const FTransform& Door : DungeonsRoom->Doors)
+			{
+				FPlane DoorPlane(Door.GetLocation(), Door.GetUnitAxis(EAxis::X));
+				DrawDebugSolidPlane(GetWorld(),DoorPlane,  Door.GetLocation(), FVector2D(HallwayData->HallWaySectionDimensions.X*0.5f, DungeonsRoom->Extent.Z), FColor::Purple, false, TickInterval);
+			}
 		}
 	}
 
@@ -242,7 +466,7 @@ void ADungeonMapper::Debug()
 	{
 		for (const FDungeonConnection& Connection : DungeonConnections)
 		{
-			DrawDebugLine(GetWorld(), Connection.StartRoom->Location, Connection.EndRoom->Location, FColor::Yellow, false, -1, 0, 10);
+			DrawDebugLine(GetWorld(), Connection.StartRoom->Location, Connection.EndRoom->Location, FColor::Yellow, false, TickInterval, 0, 10);
 		}
 	}
 	if(bShowHallways)
@@ -250,13 +474,17 @@ void ADungeonMapper::Debug()
 		for (const UDungeonHallwayData* HallWay : DungeonHallwaysData)
 		{
 			FColor* DebugColor = HallwayDebugColors.Find(HallWay->Type);
-			DrawDebugDirectionalArrow(GetWorld(), HallWay->Start, HallWay->Start + (HallWay->End - HallWay->Start)*0.5f, 1000,DebugColor ? *DebugColor : FColor::Orange, false, -1, 0, 10 );
-			DrawDebugLine(GetWorld(), HallWay->Start, HallWay->End, DebugColor ? *DebugColor : FColor::Orange, false, -1, 0, 10);
+			DrawDebugDirectionalArrow(GetWorld(), HallWay->Start, HallWay->Start + (HallWay->End - HallWay->Start)*0.5f, 1000,DebugColor ? *DebugColor : FColor::Orange, false, TickInterval, 0, 10 );
+			DrawDebugLine(GetWorld(), HallWay->Start, HallWay->End, DebugColor ? *DebugColor : FColor::Orange, false, TickInterval, 0, 10);
+		}
+		if(bIsCreatingHallways && DungeonHallwayPathFinder)
+		{
+			DungeonHallwayPathFinder->Debug(TickInterval);
 		}
 	}
 	if(bShowBounds)
 	{
-		DrawDebugBox(GetWorld(), DungeonBounds.GetCenter(), DungeonBounds.GetExtent(), FColor::Blue, false, -1, 0, 2);
+		DrawDebugBox(GetWorld(), DungeonBounds.GetCenter(), DungeonBounds.GetExtent(), FColor::Blue, false, TickInterval, 0, 2);
 	}
 }
 
@@ -330,7 +558,7 @@ void ADungeonMapper::GenerateDungeonRooms()
 		UDungeonRoomData* NewRoom = DuplicateObject(RoomData, this);
 		NewRoom->Location = RoomLocation;
 		NewRoom->Extent = RoomSize;
-		
+				
 		DungeonNodes.Add(NewRoom);
 		
 		FVector RoomMin = RoomLocation - RoomSize;
@@ -556,7 +784,7 @@ void ADungeonMapper::Collapse()
 	CollapsingIterationNotModified = 0;
 }
 
-UDungeonHallwayData* ADungeonMapper::CreateHallwayEdgePoint(UDungeonRoomData* ConnectedRoom, FVector Start, FVector End)
+UDungeonHallwayData* ADungeonMapper::CreateConnectionFromEdgePoint(UDungeonRoomData* ConnectedRoom, FVector Start, FVector End)
 {
 	if(!bHallwayToRoomConnection)
 	{
@@ -582,20 +810,29 @@ UDungeonHallwayData* ADungeonMapper::CreateHallwayEdgePoint(UDungeonRoomData* Co
 void ADungeonMapper::CreateHallways()
 {
 	DungeonHallwaysData.Empty();
-	//bIsCreatingHallways = true;
-	//ConnectionID = 0;
-	//return;
+	bIsCreatingHallways = true;
+	ConnectionID = 0;
+	if(DungeonConnections.IsEmpty())
+	{
+		return;
+	}
+
+	if(HallWayGenerationMethod == EHallwayGenerationMethod::PathFinding)
+	{
+		DungeonHallwayPathFinder->PathStartLocation = DungeonConnections[ConnectionID].StartRoom->Location;
+		DungeonHallwayPathFinder->StartRoomExtent = DungeonConnections[ConnectionID].StartRoom->Extent;
+		DungeonHallwayPathFinder->EndRoomExtent = DungeonConnections[ConnectionID].EndRoom->Extent;
+		DungeonHallwayPathFinder->MaxSlopeAngle = MaxHallwaySlope;
+		DungeonHallwayPathFinder->HallWaySegmentLength = HallwayData->HallWaySectionDimensions.X;
+		DungeonHallwayPathFinder->FillAdditionalValidConnectionDirections(DungeonConnections[ConnectionID].StartRoom->Location, DungeonConnections[ConnectionID].EndRoom->Location);
+		DungeonHallwayPathFinder->Initialize(DungeonConnections[ConnectionID].StartRoom->Location, DungeonConnections[ConnectionID].EndRoom->Location);
+		return;
+	}
+	
 	//creating hallways based on room connections
 	for (const FDungeonConnection& Connection : DungeonConnections)
 	{
 		///Divide conection into segments based on vector components///
-
-		FVector PossibleRoomExitsDirections[4];
-		PossibleRoomExitsDirections[0] = FVector::ForwardVector;
-		PossibleRoomExitsDirections[1] = FVector::BackwardVector;
-		PossibleRoomExitsDirections[2] = FVector::RightVector;
-		PossibleRoomExitsDirections[3] = FVector::LeftVector;
-		
 		const FVector ConnectionStart = Connection.StartRoom->Location;
 		const FVector ConnectionEnd = Connection.EndRoom->Location;
 		FVector ConnectionComponents[4];
@@ -606,7 +843,7 @@ void ADungeonMapper::CreateHallways()
 			float ShortestDistanceToEndConnection = MAX_FLT;
 			for (int i = 0; i < 4; ++i)
 			{
-				FVector ExitPoint = ConnectionStart + PossibleRoomExitsDirections[i] * (Connection.StartRoom->Extent);
+				FVector ExitPoint = ConnectionStart + DungeonHallwayPathFinder->CoreValidConnectionDirection[i] * (Connection.StartRoom->Extent);
 				// float Distance2DToEndConnection = FVector::DistSquared2D(ExitPoint, ConnectionEnd);
 				// if(Distance2DToEndConnection < HallwayData->HallWaySectionDimensions.X*HallwayData->HallWaySectionDimensions.X)
 				// {
@@ -617,44 +854,44 @@ void ADungeonMapper::CreateHallways()
 				if(DistanceToEndConnection < ShortestDistanceToEndConnection)
 				{
 					ShortestDistanceToEndConnection = DistanceToEndConnection;
-					ConnectionComponents[1] = PossibleRoomExitsDirections[i];
+					ConnectionComponents[1] = DungeonHallwayPathFinder->CoreValidConnectionDirection[i];
 				}
 			}
 		}
-
+	
 		ConnectionComponents[0] = ConnectionStart + ConnectionComponents[1] * (Connection.StartRoom->Extent);
 		
 		{
 			float ShortestDistanceToEndConnection = MAX_FLT;
 			for (int i = 0; i < 4; ++i)
 			{
-				FVector EExitPoint = ConnectionEnd + PossibleRoomExitsDirections[i] * (Connection.EndRoom->Extent);
+				FVector EExitPoint = ConnectionEnd + DungeonHallwayPathFinder->CoreValidConnectionDirection[i] * (Connection.EndRoom->Extent);
 				FVector StartToEnd = EExitPoint - ConnectionComponents[0];
 				FVector SHallwaySegment = ConnectionComponents[0] + ConnectionComponents[1] *  StartToEnd * 0.5f;
 				FPlane Plane(ConnectionComponents[1],ConnectionComponents[0] + SHallwaySegment);
 				FVector InterectionPoint;
-				bool Interect = FMath::SegmentPlaneIntersection(EExitPoint, EExitPoint + PossibleRoomExitsDirections[i] * (Connection.EndRoom->Extent), Plane, InterectionPoint);
+				bool Interect = FMath::SegmentPlaneIntersection(EExitPoint, EExitPoint + DungeonHallwayPathFinder->CoreValidConnectionDirection[i] * (Connection.EndRoom->Extent), Plane, InterectionPoint);
 				if(Interect)
 				{
 					continue;
 				}
-				FVector ExitPoint = ConnectionEnd + PossibleRoomExitsDirections[i] * (Connection.EndRoom->Extent);
+				FVector ExitPoint = ConnectionEnd + DungeonHallwayPathFinder->CoreValidConnectionDirection[i] * (Connection.EndRoom->Extent);
 				float DistanceToEndConnection = FVector::DistSquared(ExitPoint, ConnectionComponents[0]);
 				if(DistanceToEndConnection < ShortestDistanceToEndConnection)
 				{
 					ShortestDistanceToEndConnection = DistanceToEndConnection;
-					ConnectionComponents[2] = PossibleRoomExitsDirections[i];
+					ConnectionComponents[2] = DungeonHallwayPathFinder->CoreValidConnectionDirection[i];
 				}
 			}
 		}
-
+	
 		
 		ConnectionComponents[3] = ConnectionEnd + ConnectionComponents[2] * (Connection.EndRoom->Extent);
-
+	
 		FVector StartToEnd = ConnectionComponents[3] - ConnectionComponents[0];
 		ConnectionComponents[1] = ConnectionComponents[0] + ConnectionComponents[1] *  StartToEnd.GetAbs() * 0.5f;
 		ConnectionComponents[2] = ConnectionComponents[3] + ConnectionComponents[2] *  StartToEnd.GetAbs() * 0.5f;
-
+	
 		const FVector Slope = ConnectionComponents[2] - ConnectionComponents[1];
 		const FVector SlopeDirection = Slope.GetSafeNormal();
 		FVector SlopeBase = Slope;
@@ -677,7 +914,7 @@ void ADungeonMapper::CreateHallways()
 		///Create the doors info for the hallway, and the star and end connector to the respective rooms ////
 		FVector Start = ConnectionComponents[0];
 		FVector End = ConnectionComponents[1];
-		UDungeonHallwayData* NewHallwayConnection = CreateHallwayEdgePoint(Connection.StartRoom, Start, End);
+		UDungeonHallwayData* NewHallwayConnection = CreateConnectionFromEdgePoint(Connection.StartRoom, Start, End);
 		if(NewHallwayConnection)
 		{
 			DungeonHallwaysData.AddUnique(NewHallwayConnection);
@@ -685,13 +922,13 @@ void ADungeonMapper::CreateHallways()
 		
 		Start =  ConnectionComponents[3];
 		End = ConnectionComponents[2];
-		NewHallwayConnection = CreateHallwayEdgePoint(Connection.EndRoom, Start, End);
+		NewHallwayConnection = CreateConnectionFromEdgePoint(Connection.EndRoom, Start, End);
 		if(NewHallwayConnection)
 		{
 			DungeonHallwaysData.AddUnique(NewHallwayConnection);
 		}
 		////////////////////////////////////////////////////////////
-
+	
 		/// create the hallway data from the conneciton components
 		for (int i = 0; i < 3; ++i)
 		{
@@ -726,7 +963,7 @@ void ADungeonMapper::CreateHallways()
 						NewHallways.AddUnique(NewHallway);
 						HallWay->bIsInvalid = true;
 	
-						UDungeonHallwayData* NewHallwayConnection = CreateHallwayEdgePoint(Room, NewHallway->End, NewHallway->Start);
+						UDungeonHallwayData* NewHallwayConnection = CreateConnectionFromEdgePoint(Room, NewHallway->End, NewHallway->Start);
 						if(NewHallwayConnection)
 						{
 							NewHallways.AddUnique(NewHallwayConnection);
@@ -739,7 +976,7 @@ void ADungeonMapper::CreateHallways()
 						NewHallways.AddUnique(NewHallway);
 						HallWay->bIsInvalid = true;
 	
-						UDungeonHallwayData* NewHallwayConnection = CreateHallwayEdgePoint(Room,NewHallway->End, NewHallway->Start);
+						UDungeonHallwayData* NewHallwayConnection = CreateConnectionFromEdgePoint(Room,NewHallway->End, NewHallway->Start);
 						if(NewHallwayConnection)
 						{
 							NewHallways.AddUnique(NewHallwayConnection);
@@ -755,7 +992,7 @@ void ADungeonMapper::CreateHallways()
 			});
 		DungeonHallwaysData.Append(NewHallways);
 	}
-
+	
 	//Merge Hallways that fallow the same path
 	int32 NumHallways = DungeonHallwaysData.Num();
 	for (int i = 0; i < NumHallways; ++i)
@@ -772,8 +1009,8 @@ void ADungeonMapper::CreateHallways()
 			{
 				continue;
 			}
-
-
+	
+	
 			bool AreColinear = FirstHallway->Direction.GetAbs().Equals(SecondHallway->Direction.GetAbs());
 			if(!AreColinear)
 			{
@@ -788,7 +1025,7 @@ void ADungeonMapper::CreateHallways()
 			{
 				continue;
 			}
-
+	
 			if(FirstHallway->Direction.Equals(SecondHallway->Direction))
 			{
 				if(FirstHallway->Start.Equals(SecondHallway->End))
@@ -839,7 +1076,7 @@ void ADungeonMapper::CreateHallways()
 			}
 		}
 	}
-
+	
 	DungeonHallwaysData.RemoveAll([](const UDungeonHallwayData* OtherHallWay)
 		{
 			return OtherHallWay->bIsInvalid;
@@ -863,7 +1100,7 @@ void ADungeonMapper::CreateHallways()
 	 			{
 	 				continue;
 	 			}
-
+	
 	 			FVector IntersectionPoint1 = FVector::ZeroVector;
 	 			FVector IntersectionPoint2 = FVector::ZeroVector;
 	 			FMath::SegmentDistToSegmentSafe(FirstHallway->Start, FirstHallway->End, SecondHallway->Start, SecondHallway->End, IntersectionPoint1, IntersectionPoint2);
@@ -1108,6 +1345,22 @@ UDungeonHallwayData* ADungeonMapper::FixHallwayCrossingRoom(UDungeonRoomData* Ro
 		return NewHallway;
 	}
 	return nullptr;
+}
+
+bool ADungeonMapper::HasHallwayReachedDestination(const FHallWayPathNode& PathNode, FVector& Out_HitPoint, FVector& Out_HitNormal)
+{
+	if(PathNode.Path.Num() < 2)
+	{
+		return false;
+	}
+	
+	FDungeonConnection& EvaluatedConnection = DungeonConnections[ConnectionID];
+	FBox EndRoom(EvaluatedConnection.EndRoom->Location - EvaluatedConnection.EndRoom->Extent, EvaluatedConnection.EndRoom->Location + EvaluatedConnection.EndRoom->Extent);
+	//EndRoom = EndRoom.ExpandBy(FVector(HallwayData->HallWaySectionDimensions.X, HallwayData->HallWaySectionDimensions.X, 0.0f));
+
+	float HitTime = 0.0f;
+	const bool IsIntersecting = FMath::LineExtentBoxIntersection(EndRoom, PathNode.Path.Last(1), PathNode.NodeLocation, FVector::ZeroVector,  Out_HitPoint, Out_HitNormal, HitTime);
+	return IsIntersecting && HitTime > 0 && HitTime < 1.0f;
 }
 
 void ADungeonMapper::RenderHallWays(UDynamicMesh* DynMesh, const UDungeonHallwayData* DungeonHallway)
@@ -1377,150 +1630,6 @@ void ADungeonMapper::HallowHallWays(UDynamicMesh* DynamicMesh, const UDungeonHal
 						BoolOptions		
 					);
 		ReleaseComputeMesh(HallwayMesh);
-}
-
-FVector FHallWayPathFinder::FromWorldToGridCoord(const FVector& WorldCoord) const
-{
-	const int32 GridX = FMath::RoundToInt32((WorldCoord.X - GridStartingLocation.X)/CellExtend.X);
-	const int32 GridY = FMath::RoundToInt32((WorldCoord.Y - GridStartingLocation.Y)/CellExtend.Y);
-	const int32 GridZ = FMath::RoundToInt32((WorldCoord.Z - GridStartingLocation.Z)/CellExtend.Z);
-	return FVector(GridX, GridY, GridZ);
-}
-
-FVector FHallWayPathFinder::FromGridToWorldCoord(const FVector GridCoord) const
-{
-	const float XPosition = GridCoord.X*CellExtend.X+GridStartingLocation.X;
-	const float YPosition = GridCoord.Y*CellExtend.Y+GridStartingLocation.Y;
-	const float ZPosition = GridCoord.Z*CellExtend.Z+GridStartingLocation.Z;
-	return FVector(XPosition, YPosition, ZPosition);
-}
-
-void FHallWayPathFinder::FillConnectedCells(const FHallWayPathNode& CurrentCell, const FVector& CurrentCellGridCoord, TArray<FHallWayPathNode>& OutConnectedRooms) const
-{
-	const FVector Front(CurrentCellGridCoord.X + 1, CurrentCellGridCoord.Y, CurrentCellGridCoord.Z);
-	const FVector Back(CurrentCellGridCoord.X - 1, CurrentCellGridCoord.Y, CurrentCellGridCoord.Z);
-	const FVector Right(CurrentCellGridCoord.X, CurrentCellGridCoord.Y + 1, CurrentCellGridCoord.Z);
-	const FVector Left(CurrentCellGridCoord.X, CurrentCellGridCoord.Y - 1, CurrentCellGridCoord.Z);
-	const FVector Up(CurrentCellGridCoord.X, CurrentCellGridCoord.Y, CurrentCellGridCoord.Z + 1);
-	const FVector Down(CurrentCellGridCoord.X, CurrentCellGridCoord.Y, CurrentCellGridCoord.Z- 1);
-
-	if(Front.X < MaxCells.X)
-	{
-		FVector WorldCoord = FromGridToWorldCoord(Front);
-		OutConnectedRooms.Add(FHallWayPathNode(CurrentCell, WorldCoord));
-	}
-	if(Back.X > 0)
-	{
-		FVector WorldCoord = FromGridToWorldCoord(Back);
-		OutConnectedRooms.Add(FHallWayPathNode(CurrentCell, WorldCoord));
-	}
-	if(Right.Y < MaxCells.Y)
-	{
-		FVector WorldCoord = FromGridToWorldCoord(Right);
-		OutConnectedRooms.Add(FHallWayPathNode(CurrentCell, WorldCoord));
-	}
-	if(Left.Y > 0)
-	{
-		FVector WorldCoord = FromGridToWorldCoord(Left);
-		OutConnectedRooms.Add(FHallWayPathNode(CurrentCell, WorldCoord));
-	}
-	if(Up.Z < MaxCells.Z)
-	{
-		FVector WorldCoord = FromGridToWorldCoord(Up);
-		OutConnectedRooms.Add(FHallWayPathNode(CurrentCell, WorldCoord));
-	}
-	if(Down.Z > 0)
-	{
-		FVector WorldCoord = FromGridToWorldCoord(Down);
-		OutConnectedRooms.Add(FHallWayPathNode(CurrentCell, WorldCoord));
-	}
-}
-
-void FHallWayPathFinder::CalculateHallwayPath(const FVector& StartingPoint, const FVector& EndPoint)
-{
-	CurrentPath = FHallWayPath();
-	CurrentPath.Start = StartingPoint;
-	CurrentPath.End = EndPoint;
-
-	const FVector StartingCell = FromWorldToGridCoord(CurrentPath.Start);
-	const FVector StartingCellCenter = FromGridToWorldCoord(StartingCell);
-	//Start Pathing
-	OpenRooms.Empty();
-	ClosedRooms.Empty();
-	OpenRooms.Add(StartingCellCenter);
-	while (!OpenRooms.IsEmpty())
-	{
-		if(EvaluateNextNode())
-		{
-			break;
-		}
-	}
-}
-
-bool FHallWayPathFinder::EvaluateNextNode()
-{
-	FVector EndGridCoord = FromWorldToGridCoord(CurrentPath.End);
-	FHallWayPathNode CurrentCell = OpenRooms.Pop();
-	FVector GridCoord = FromWorldToGridCoord(CurrentCell.NodeLocation);
-		
-	ClosedRooms.Add(CurrentCell.NodeLocation);
-
-	if(GridCoord.Equals(EndGridCoord))
-	{
-		CurrentPath.AssignPath(CurrentCell.Path);
-		Paths.Add(CurrentPath);
-		return true;
-	}
-
-	TArray<FHallWayPathNode> ConnectedRooms;
-	FillConnectedCells(CurrentCell, GridCoord, ConnectedRooms);
-
-	for (FHallWayPathNode& Cell : ConnectedRooms)
-	{
-		if(ClosedRooms.Contains(Cell))
-		{
-			continue;
-		}
-
-		Cell.G = CurrentCell.G + FVector::DistSquared(CurrentCell.NodeLocation, Cell.NodeLocation);
-		Cell.H = FVector::DistSquared(CurrentPath.End, Cell.NodeLocation);
-		Cell.F = Cell.G + Cell.H;
-
-		if(OpenRooms.Contains(Cell))
-		{
-			continue;
-		}
-		OpenRooms.Push(Cell);
-	}
-	OpenRooms.Sort();
-	return false;
-}
-
-void FHallWayPathFinder::DebugRender(UWorld* World)
-{
-	for (const FHallWayPathNode& Room : OpenRooms)
-	{
-		DrawDebugBox(World, Room.NodeLocation, CellExtend*0.5f, FColor::Green, true, -1,0, 2.0f);
-		for (int i = 0; i < Room.Path.Num() - 1; ++i)
-		{
-			const FVector Start = Room.Path[i];
-			const FVector End = Room.Path[i + 1];
-			DrawDebugLine(World,Start, End, FColor::Orange, true, -1,0,10 );
-		}
-	}
-	
-	const FHallWayPathNode& NextRoom = OpenRooms.Last();
-	for (int i = 0; i < NextRoom.Path.Num() - 1; ++i)
-	{
-		const FVector Start = NextRoom.Path[i];
-		const FVector End = NextRoom.Path[i + 1];
-		DrawDebugLine(World,Start, End, FColor::Yellow, true, -1,0,10 );
-	}
-	
-	for (const FHallWayPathNode& Room : ClosedRooms)
-	{
-		DrawDebugBox(World, Room.NodeLocation, CellExtend*0.5f, FColor::Red, true, -1,0, 2.0f);
-	}
 }
 
 UDynamicMeshPool* ADungeonMapper::GetComputeMeshPool()
