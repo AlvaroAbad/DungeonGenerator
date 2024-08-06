@@ -62,10 +62,10 @@ void ADungeonRoom::InitializeRoom(const UDungeonRoomData* Node)
 	(
 		ToolMesh
 		, PrimitiveOptions
-		, FTransform::Identity
+		, FTransform::Identity*FTransform(FVector::UpVector*Node->WallThickness)
 		, Node->Extent.X*2.0f - Node->WallThickness * 2.0f
 		, Node->Extent.Y*2.0f - Node->WallThickness * 2.0f
-		,  Node->Extent.Z*2.0f - Node->WallThickness * 2.0f
+		,  Node->Extent.Z*2.0f
 		, Node->Extent.X*2.0f/125 + 1, Node->Extent.Y*2.0f/125 + 1, Node->Extent.Z*2.0f/125 + 1
 		, EGeometryScriptPrimitiveOriginMode::Center
 	);
@@ -87,9 +87,9 @@ void ADungeonRoom::InitializeRoom(const UDungeonRoomData* Node)
 
 void ADungeonRoom::CreateDoors(UDynamicMesh*& DynMesh, const UDungeonRoomData* DungeonsNode, TArray<UMaterialInterface*>& OutMaterialList)
 {
-	for (const FTransform OriginalDoorTransform : DungeonsNode->Doors)
+	for (const FDungeonDoor& OriginalDoor : DungeonsNode->Doors)
 	{
-		FTransform DoorTransform = OriginalDoorTransform.GetRelativeTransform(GetActorTransform());
+		FTransform DoorTransform = OriginalDoor.Transform;
 		if(DoorTransform.GetUnitAxis(EAxis::X).GetAbs().Equals(FVector::UpVector))
 		{
 			continue;
@@ -115,7 +115,7 @@ void ADungeonRoom::CreateDoors(UDynamicMesh*& DynMesh, const UDungeonRoomData* D
 
 		//Scale door to fit wall
 		float DoorHeight = DoorBounds.GetExtent().Z * 2.0f;
-		float RoomWallHeight = DungeonsNode->Extent.Z - DungeonsNode->WallThickness * 2.0f;
+		float RoomWallHeight = (DungeonsNode->Extent.Z - DungeonsNode->WallThickness) * 2.0f;
 		float ScaleRate = DoorHeight > RoomWallHeight ? RoomWallHeight / DoorHeight : 1.0f;
 		ToolMesh = UGeometryScriptLibrary_MeshTransformFunctions::ScaleMesh(ToolMesh, FVector(ScaleRate));
 

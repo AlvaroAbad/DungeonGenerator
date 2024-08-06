@@ -454,10 +454,11 @@ void ADungeonMapper::Debug()
 			DrawDebugDirectionalArrow(GetWorld(), DungeonsRoom->Location, DungeonsRoom->Location + DungeonsRoom->Velocity, 10.0f, FColor::Black, false, TickInterval, 0, 2);
 			uint64 InnerKey = GetTypeHash(DungeonsRoom->GetName()+ "Velocity");
 			GEngine->AddOnScreenDebugMessage(InnerKey, 2.0f, FColor::Green, FString::Printf(TEXT("Velocity:  [M]%f | [D]%s"), DungeonsRoom->Velocity.Length(), *DungeonsRoom->Velocity.ToString()));
-			for (const FTransform& Door : DungeonsRoom->Doors)
+			for (const FDungeonDoor& Door : DungeonsRoom->Doors)
 			{
-				FPlane DoorPlane(Door.GetLocation(), Door.GetUnitAxis(EAxis::X));
-				DrawDebugSolidPlane(GetWorld(),DoorPlane,  Door.GetLocation(), FVector2D(HallwayData->HallWaySectionDimensions.X*0.5f, DungeonsRoom->Extent.Z), FColor::Purple, false, TickInterval);
+				FTransform WSDoor = Door.Transform*FTransform(DungeonsRoom->Location);
+				FPlane DoorPlane(WSDoor.GetLocation(), WSDoor.GetUnitAxis(EAxis::X));
+				DrawDebugSolidPlane(GetWorld(),DoorPlane,  WSDoor.GetLocation(), FVector2D(HallwayData->HallWaySectionDimensions.X*0.5f, DungeonsRoom->Extent.Z), FColor::Purple, false, TickInterval);
 			}
 		}
 	}
@@ -488,6 +489,13 @@ void ADungeonMapper::Debug()
 	}
 }
 
+FTransform ADungeonMapper::GenerateDoorOnRoomWall(FRandomStream RandomStream, const FVector& RoomSize, const FVector& DoorForward, const FVector& SlidingVector) const
+{
+	float DoorTime = RandomStream.FRandRange(-0.5f, 0.5f);
+	FVector DoorLocation = DoorForward * RoomSize + SlidingVector * ((RoomSize * 2.0f - HallwayData->HallWaySectionDimensions.X) * DoorTime);
+	return FTransform(DoorForward.ToOrientationQuat(), DoorLocation);
+}
+
 void ADungeonMapper::GenerateDungeonRooms()
 {
 	SCOPE_SECONDS_ACCUMULATOR(STAT_GenerateRooms);
@@ -505,81 +513,75 @@ void ADungeonMapper::GenerateDungeonRooms()
 		return;
 	}
 	DungeonBounds = NavSys->GetNavigableWorldBounds();
-
-	//Divde spawn area in equal spaced cells of max size of rooms
+	FRandomStream RandomStream(RandomSeed);
+	TArray<FDungeonDoor*> DoorsCreated;
+	
 	const int32 XCells = DungeonBounds.GetExtent().X / (RoomXExtent.Y);
 	const int32 YCells = DungeonBounds.GetExtent().Y / (RoomYExtent.Y);
 	const int32 ZCells = DungeonBounds.GetExtent().Z / (RoomZExtent.Y);
-
-	FBox CellBounds(FVector::ZeroVector, FVector::ZeroVector);
-	CellBounds = CellBounds.ExpandBy(FVector(DungeonBounds.GetExtent().X / XCells,  DungeonBounds.GetExtent().Y / YCells, DungeonBounds.GetExtent().Z / ZCells));
-	const FVector CellStartingLocation = DungeonBounds.Min - CellBounds.Min;
-
-	FRandomStream RandomStream(RandomSeed);
-	FVector MinDungeonBounds = FVector::ZeroVector;
-	FVector MaxDungeonBounds = FVector::ZeroVector;
-	
 	const int32 RoomsToGenerate = RandomStream.RandRange(FMath::Min(MinRooms,XCells * YCells * ZCells) , FMath::Min(MaxRooms,XCells * YCells * ZCells));
-	TArray<FVector> UsedUpCells;
-	for(int32 i = 0; i < RoomsToGenerate; i++)
-	{
-		// Randomise the size of the room, and in what cell we want to spawn it.
-		// reduce the bounds of the cell by the size of the room, so we are sure the room won't go outside the spawn area.
-		// randomise a location in the narrowed down Cell bounds.
-		const FVector CellExtend = CellBounds.GetExtent()*2.0f;
-		
-		const int32 RoomXSize = RandomStream.RandRange(RoomXExtent.X, RoomXExtent.Y);
-		const int32 RoomYSize = RandomStream.RandRange(RoomYExtent.X, RoomYExtent.Y);
-		const int32 RoomZSize = RandomStream.RandRange(RoomZExtent.X, RoomZExtent.Y);
-		const FVector RoomSize(RoomXSize, RoomYSize, RoomZSize);
-
-		//Make sure we dont use a cell already with a room
-		FVector CellCoord = FVector::ZeroVector;
-		do
-		{
-			const int32 XCell = RandomStream.RandRange(0, XCells - 1);
-			const int32 YCell = RandomStream.RandRange(0, YCells - 1);
-			const int32 ZCell = RandomStream.RandRange(0, ZCells - 1);
-			CellCoord = FVector(XCell, YCell, ZCell);
-			
-		}while(UsedUpCells.Contains(CellCoord));
-		
-		UsedUpCells.Add(CellCoord);
-		
-		const float XPosition = CellCoord.X*CellExtend.X+CellStartingLocation.X;
-		const float YPosition = CellCoord.Y*CellExtend.Y+CellStartingLocation.Y;
-		const float ZPosition = CellCoord.Z*CellExtend.Z+CellStartingLocation.Z;
-
-		FBox SpawnerCellBounds = CellBounds.ExpandBy( -FVector(RoomXSize, RoomYSize ,RoomZSize));
-		SpawnerCellBounds = SpawnerCellBounds.MoveTo(FVector(XPosition, YPosition, ZPosition));
 	
-		const FVector RoomLocation = RandomStream.RandPointInBox(SpawnerCellBounds);
+	UDungeonRoomData* NewRoomNode = CreateRoom(RandomStream);
 
-		UDungeonRoomData* NewRoom = DuplicateObject(RoomData, this);
-		NewRoom->Location = RoomLocation;
-		NewRoom->Extent = RoomSize;
-				
-		DungeonNodes.Add(NewRoom);
-		
-		FVector RoomMin = RoomLocation - RoomSize;
-		FVector RoomMax = RoomLocation + RoomSize;
-
-		if(i==0)
-		{
-			MinDungeonBounds = RoomMin;
-			MaxDungeonBounds = RoomMax;
-		}
-		else
-		{
-			MinDungeonBounds.X = FMath::Min(RoomMin.X, MinDungeonBounds.X);
-			MinDungeonBounds.Y = FMath::Min(RoomMin.Y, MinDungeonBounds.Y);
-			MinDungeonBounds.Z = FMath::Min(RoomMin.Z, MinDungeonBounds.Z);
-
-			MaxDungeonBounds.X = FMath::Max(RoomMax.X, MaxDungeonBounds.X);
-			MaxDungeonBounds.Y = FMath::Max(RoomMax.Y, MaxDungeonBounds.Y);
-			MaxDungeonBounds.Z = FMath::Max(RoomMax.Z, MaxDungeonBounds.Z);
-		}
+	for (FDungeonDoor& Door : NewRoomNode->Doors)
+	{
+		DoorsCreated.Add(&Door);
 	}
+	
+	DungeonNodes.Add(NewRoomNode);
+
+	FVector RoomMin = -NewRoomNode->Extent;
+	FVector RoomMax = NewRoomNode->Extent;
+	FVector MinDungeonBounds = RoomMin;
+	FVector MaxDungeonBounds = RoomMax;
+	
+	for (int RoomIdx = 0; RoomIdx < RoomsToGenerate - 1; ++RoomIdx)
+	{
+		if(DoorsCreated.IsEmpty())
+		{
+			break;
+		}
+		int32 ConectingDoorIdx = RandomStream.RandRange(0, DoorsCreated.Num() - 1);
+		FTransform ConnectingDoorTransform = DoorsCreated[ConectingDoorIdx]->Transform * FTransform(DoorsCreated[ConectingDoorIdx]->ConnectingRoom[0]->Location);
+		ConnectingDoorTransform.ConcatenateRotation(FQuat(FRotator(0,180,0)));
+		
+		//create room
+		NewRoomNode = CreateRoom(RandomStream);
+
+		//Move room so at least one door is conected to selected door
+		int32 DoorToConnectIdx = RandomStream.RandRange(0, NewRoomNode->Doors.Num() - 1);
+		FDungeonDoor& DoorToConnect = NewRoomNode->Doors[DoorToConnectIdx];
+		
+		const FTransform WSDoorToConnect = DoorToConnect.Transform*FTransform(NewRoomNode->Location);
+		FTransform Translation = (WSDoorToConnect).GetRelativeTransformReverse(ConnectingDoorTransform);
+
+		FBox Room(NewRoomNode->Location - NewRoomNode->Extent, NewRoomNode->Location + NewRoomNode->Extent);
+		Room = Room.TransformBy(Translation);
+		NewRoomNode->Location = Room.GetCenter();
+		NewRoomNode->Extent = Room.GetExtent();
+		for (int DoorIdx = 0; DoorIdx < NewRoomNode->Doors.Num(); ++DoorIdx)
+		{
+			FTransform WSDoorCreated = NewRoomNode->Doors[DoorIdx].Transform*FTransform(FVector::ZeroVector);
+			NewRoomNode->Doors[DoorIdx].Transform = (WSDoorCreated*Translation).GetRelativeTransform(FTransform(NewRoomNode->Location));
+			if(DoorIdx == DoorToConnectIdx)
+			{
+				continue;
+			}
+			DoorsCreated.Add(&NewRoomNode->Doors[DoorIdx]);
+		}
+		
+		DoorsCreated.RemoveAt(ConectingDoorIdx);
+		DungeonNodes.Add(NewRoomNode);
+		
+		MinDungeonBounds.X = FMath::Min(Room.Min.X, MinDungeonBounds.X);
+		MinDungeonBounds.Y = FMath::Min(Room.Min.X, MinDungeonBounds.Y);
+		MinDungeonBounds.Z = FMath::Min(Room.Min.X, MinDungeonBounds.Z);
+
+		MaxDungeonBounds.X = FMath::Max(Room.Max.X, MaxDungeonBounds.X);
+		MaxDungeonBounds.Y = FMath::Max(Room.Max.X, MaxDungeonBounds.Y);
+		MaxDungeonBounds.Z = FMath::Max(Room.Max.X, MaxDungeonBounds.Z);
+	}
+	
 	DungeonBounds = FBox(MinDungeonBounds, MaxDungeonBounds);
 }
 
@@ -1214,6 +1216,37 @@ void ADungeonMapper::ClearAll()
 void ADungeonMapper::NextStep()
 {
 	FlushPersistentDebugLines(GetWorld());
+}
+
+UDungeonRoomData* ADungeonMapper::CreateRoom(FRandomStream& RandomStream)
+{
+	int32 RoomXSize = RandomStream.RandRange(RoomXExtent.X, RoomXExtent.Y);
+	int32 RoomYSize = RandomStream.RandRange(RoomYExtent.X, RoomYExtent.Y);
+	int32 RoomZSize = RandomStream.RandRange(RoomZExtent.X, RoomZExtent.Y);
+
+	UDungeonRoomData* NewRoom = DuplicateObject(RoomData, this);
+	NewRoom->Location = DungeonBounds.GetCenter();
+	NewRoom->Extent = FVector(RoomXSize, RoomYSize, RoomZSize);
+
+	int32 NumDoors = RandomStream.RandRange(1, 4);
+	FVector ValidDoorDirections[4] {FVector::ForwardVector, FVector::RightVector, FVector::BackwardVector, FVector::LeftVector};
+	TSet<int32> UsedDirections;
+	for (int DoorIdx = 0; DoorIdx < NumDoors; ++DoorIdx)
+	{
+		
+		int32 DoorDirection = RandomStream.RandRange(0, 3);
+		while (UsedDirections.Contains(DoorDirection))
+		{
+			DoorDirection = RandomStream.RandRange(0, 3);
+		}
+		UsedDirections.Add(DoorDirection);
+		FVector DoorForward = ValidDoorDirections[DoorDirection];
+		FVector SlidingVector = ValidDoorDirections[(DoorDirection + 1)%2];
+		FTransform DoorTransform = GenerateDoorOnRoomWall(RandomStream, NewRoom->Extent, DoorForward, SlidingVector);
+		NewRoom->Doors.Add(FDungeonDoor(DoorTransform, NewRoom));
+	}
+	
+	return NewRoom;
 }
 
 void ADungeonMapper::EvaluateVertex(UDungeonRoomData* Vertex, TArray<FTetrahedron>& OutTetrahedrons) const

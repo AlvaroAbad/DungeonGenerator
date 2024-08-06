@@ -168,6 +168,7 @@ private:
 	void RunHallwaysCreation();
 	void RunPhysics(float DeltaSeconds);
 	void Debug();
+	FTransform GenerateDoorOnRoomWall(FRandomStream RandomStream, const FVector& RoomSize, const FVector& DoorForward, const FVector& SlidingVector) const;
 	UFUNCTION(CallInEditor, BlueprintCallable, Category = "Dungeon Mapper|Generators")
 	void GenerateDungeonRooms();
 	UFUNCTION(CallInEditor, BlueprintCallable, Category = "Dungeon Mapper|Generators")
@@ -186,6 +187,8 @@ private:
 
 	UFUNCTION(CallInEditor, BlueprintCallable, Category = "Dungeon Mapper|Generators")
 	void NextStep();
+	//Room Creation
+	UDungeonRoomData* CreateRoom(FRandomStream& RandomStream);
 	
 	//Connection creation
 	void EvaluateVertex(UDungeonRoomData* Vertex, TArray<FTetrahedron>& OutTetrahedrons) const;

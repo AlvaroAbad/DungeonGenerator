@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "DungeonMapperData.generated.h"
 
+struct FDungeonDoor;
 struct FDungeonConnection;
 
 UENUM()
@@ -40,7 +41,7 @@ public:
 	FVector Extent;
 	ERoomType RoomType = ERoomType::Mid;
 	TArray<const FDungeonConnection*> Connections;
-	TArray<FTransform> Doors;
+	TArray<FDungeonDoor> Doors;
 
 	FVector Velocity = FVector::ZeroVector;
 	FVector PrevLocation = FVector::ZeroVector;
@@ -55,6 +56,23 @@ public:
 	{
 		return Location.Equals(Other->Location) && Extent.Equals(Other->Extent);
 	}
+};
+
+USTRUCT(BlueprintType)
+struct FDungeonDoor
+{
+	GENERATED_BODY()
+	FTransform Transform = FTransform::Identity;
+	UDungeonRoomData* ConnectingRoom[2]{nullptr, nullptr};
+	FDungeonDoor()
+	{}
+	
+	FDungeonDoor(const FTransform& T, UDungeonRoomData* Room1 = nullptr, UDungeonRoomData* Room2 = nullptr)
+		: Transform(T)
+		{
+			ConnectingRoom[0] = Room1;
+			ConnectingRoom[1] = Room2;
+		}
 };
 
 UCLASS(Blueprintable, BlueprintType)
