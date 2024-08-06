@@ -179,7 +179,6 @@ bool UDungeonHallwayPathFinder::HasReachedDestiny(FVector& Out_EndLocation) cons
 		FVector2D PlaneSize(NegatedDirection.GetAbs()*EndRoomExtent);
 		PlaneSize.X = (PlaneSize.X != 0 ? PlaneSize.X : PlaneSize.Y) - HallWaySegmentLength;
 		PlaneSize.Y = EndRoomExtent.Z;
-		DrawDebugSolidPlane(GetWorld(),PlaneToCheck,  PathEndLocation + CoreValidConnectionDirection[i]*EndRoomExtent, PlaneSize, FColor::Red, false);
 
 		if(PlaneIntersecting)
 		{
@@ -187,7 +186,6 @@ bool UDungeonHallwayPathFinder::HasReachedDestiny(FVector& Out_EndLocation) cons
 			Room = FBox(PathEndLocation - RoomExpansion, PathEndLocation + RoomExpansion);
 			if(Room.IsInsideOrOn(Out_EndLocation))
 			{
-				DrawDebugSolidPlane(GetWorld(),PlaneToCheck,  PathEndLocation + CoreValidConnectionDirection[i]*EndRoomExtent, PlaneSize, FColor::Red, true);
 				DrawDebugPoint(GetWorld(), Out_EndLocation, 10.0f, FColor::Green, true);
 				//Out_EndLocation += (-CoreValidConnectionDirection[i])*HallWaySegmentLength;
 				return true;
