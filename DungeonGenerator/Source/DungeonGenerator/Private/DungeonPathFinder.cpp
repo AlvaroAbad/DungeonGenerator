@@ -19,6 +19,7 @@ bool UDungeonPathFinder::Evaluate()
 	}
 	
 	CurrentNode = OpenNodes.Pop();
+	ClosedNodes.Push(CurrentNode);
 	FVector FinalEndLocation;
 	if(HasReachedDestiny(FinalEndLocation))
 	{
@@ -39,10 +40,16 @@ bool UDungeonPathFinder::Evaluate()
 
 		FillMetrics(ConnectedNode, CurrentNode);
 		int32 NodeIndex = OpenNodes.Find(ConnectedNode);
-		if(NodeIndex != INDEX_NONE && ConnectedNode < OpenNodes[NodeIndex])
+		if(NodeIndex != INDEX_NONE && ConnectedNode <= OpenNodes[NodeIndex])
 		{
 			continue;
 		}
+		NodeIndex = ClosedNodes.Find(ConnectedNode);
+		if(NodeIndex != INDEX_NONE)
+		{
+			continue;
+		}
+		
 		OpenNodes.Push(ConnectedNode);
 	}
 	OpenNodes.Sort();
@@ -172,18 +179,20 @@ bool UDungeonHallwayPathFinder::HasReachedDestiny(FVector& Out_EndLocation) cons
 	for (int i = 0; i < 4; ++i)
 	{
 		FPlane PlaneToCheck(PathEndLocation + CoreValidConnectionDirection[i]*(EndRoomExtent+HallWaySegmentLength), CoreValidConnectionDirection[i]);
-
+		
 		const bool PlaneIntersecting = FMath::SegmentPlaneIntersection(CurrentNode.Path.Last(1), CurrentNode.NodeLocation, PlaneToCheck, Out_EndLocation);
 
 		FVector NegatedDirection(!CoreValidConnectionDirection[i].X, !CoreValidConnectionDirection[i].Y, 0);
 		FVector2D PlaneSize(NegatedDirection.GetAbs()*EndRoomExtent);
 		PlaneSize.X = (PlaneSize.X != 0 ? PlaneSize.X : PlaneSize.Y) - HallWaySegmentLength;
 		PlaneSize.Y = EndRoomExtent.Z;
-
+		// DrawDebugSolidPlane(GetWorld(), PlaneToCheck, PathEndLocation + CoreValidConnectionDirection[i]*(EndRoomExtent+HallWaySegmentLength), PlaneSize, FColor::White, false, 1);
 		if(PlaneIntersecting)
 		{
-			const FVector RoomExpansion = EndRoomExtent + CoreValidConnectionDirection[i].GetAbs() * HallWaySegmentLength - NegatedDirection * HallWaySegmentLength;
+			const FVector RoomExpansion = EndRoomExtent + CoreValidConnectionDirection[i].GetAbs() * (HallWaySegmentLength + 1) - NegatedDirection * (HallWaySegmentLength + 1);// Additional unit to prevent floating point error
 			Room = FBox(PathEndLocation - RoomExpansion, PathEndLocation + RoomExpansion);
+			// DrawDebugBox(GetWorld(), Room.GetCenter(), Room.GetExtent(), FColor::Black, false, 1);
+			// DrawDebugPoint(GetWorld(),Out_EndLocation, 10.0f, FColor::Magenta, false,  );
 			if(Room.IsInsideOrOn(Out_EndLocation))
 			{
 				DrawDebugPoint(GetWorld(), Out_EndLocation, 10.0f, FColor::Green, true);
@@ -205,29 +214,46 @@ void UDungeonHallwayPathFinder::BuildPath()
 	{
 		FinalPath.Add(CurrentNode.Path[i]);
 	}
-	FinalPath.Add(CurrentNode.Path.Last());
+	
 
+	if(FVector::Dist(CurrentNode.Path.Last(), FinalPath.Last()) > HallWaySegmentLength)
+	{
+		FinalPath.Add(CurrentNode.Path.Last());
+	}
 	FBox EndRoom = FBox(PathEndLocation - (EndRoomExtent), PathEndLocation + EndRoomExtent);
-	FinalPath.Add(EndRoom.GetClosestPointTo(CurrentNode.Path.Last()));
+	FVector ConectingPoint = EndRoom.GetClosestPointTo(CurrentNode.Path.Last());
+	FinalPath.Last().Z = ConectingPoint.Z;
+	FinalPath.Add(ConectingPoint);
 	PathResult = FinalPath;
 }
 
 void UDungeonHallwayPathFinder::GetConnectedNodes(TArray<FDungeonPathNode>& Connections) const
 {
 	Connections.Empty();
-	const FBox Room = FBox(PathEndLocation - (EndRoomExtent + HallWaySegmentLength), PathEndLocation + (EndRoomExtent+FVector(HallWaySegmentLength, HallWaySegmentLength, 0)));
+	FBox Room = FBox(PathEndLocation - (EndRoomExtent + HallWaySegmentLength), PathEndLocation + (EndRoomExtent+FVector(HallWaySegmentLength, HallWaySegmentLength, 0)));
+	Room = Room.ExpandBy(FVector(0, 0, FLT_MAX));
 	if(Room.IsInsideOrOn(CurrentNode.NodeLocation))
 	{
 		return;
 	}
+	Room = Room.ExpandBy(FVector(-HallWaySegmentLength, -HallWaySegmentLength, 0));
 	for (int i = 0; i < CoreValidConnectionDirection.Num(); ++i)
 	{
-		Connections.Add(FDungeonPathNode(CurrentNode, CurrentNode.NodeLocation + CoreValidConnectionDirection[i] * HallWaySegmentLength));
+		const FVector ValidDirection = CurrentNode.NodeLocation + CoreValidConnectionDirection[i] * HallWaySegmentLength;
+		if(Room.IsInside(ValidDirection))
+		{
+			continue;
+		}
+		Connections.Add(FDungeonPathNode(CurrentNode, ValidDirection));
 	}
 	
 	for (int i = 0; i < ValidConnectionDirection.Num(); ++i)
 	{
 		const FVector ValidDirection = CurrentNode.NodeLocation + ValidConnectionDirection[i] * HallWaySegmentLength;
+		if(Room.IsInside(ValidDirection))
+		{
+			continue;
+		}
 		Connections.Add(FDungeonPathNode(CurrentNode, ValidDirection));
 	}
 }

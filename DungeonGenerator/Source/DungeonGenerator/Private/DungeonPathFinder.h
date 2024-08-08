@@ -38,9 +38,13 @@ struct FDungeonPathNode
 		return SameLocation && SameMetrics;
 	}
 
-	bool operator<(const FDungeonPathNode& Other) const
+	bool operator <(const FDungeonPathNode& Other) const
 	{
 		return F > Other.F;
+	}
+	bool operator <=(const FDungeonPathNode& Other) const
+	{
+		return F >= Other.F;
 	}
 };
 
