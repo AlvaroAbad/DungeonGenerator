@@ -166,18 +166,12 @@ public:
 	//Override - AActor - END
 private:
 	void RunHallwaysCreation();
-	void RunPhysics(float DeltaSeconds);
 	void Debug();
 	FTransform GenerateDoorOnRoomWall(FRandomStream RandomStream, const FVector& RoomSize, const FVector& DoorForward, const FVector& SlidingVector) const;
 	UFUNCTION(CallInEditor, BlueprintCallable, Category = "Dungeon Mapper|Generators")
 	void GenerateDungeonRooms();
-	UFUNCTION(CallInEditor, BlueprintCallable, Category = "Dungeon Mapper|Generators")
-	void ConnectRooms();
-	UFUNCTION(CallInEditor, BlueprintCallable, Category = "Dungeon Mapper|Generators")
-	void SimplifyConnections();
-	UFUNCTION(CallInEditor, BlueprintCallable, Category = "Dungeon Mapper|Generators")
-	void Collapse();
 	UDungeonHallwayData* CreateConnectionFromEdgePoint(UDungeonRoomData* ConnectedRoom, FVector Start, FVector End);
+	void FindNextOrphanDoor();
 	UFUNCTION(CallInEditor, BlueprintCallable, Category = "Dungeon Mapper|Generators")
 	void CreateHallways();
 	UFUNCTION(CallInEditor, BlueprintCallable, Category = "Dungeon Mapper|Generators")
@@ -185,19 +179,11 @@ private:
 	UFUNCTION(CallInEditor, BlueprintCallable, Category = "Dungeon Mapper|Generators")
 	void ClearAll();
 
-	UFUNCTION(CallInEditor, BlueprintCallable, Category = "Dungeon Mapper|Generators")
-	void NextStep();
 	//Room Creation
 	UDungeonRoomData* CreateRoom(FRandomStream& RandomStream);
-	
-	//Connection creation
-	void EvaluateVertex(UDungeonRoomData* Vertex, TArray<FTetrahedron>& OutTetrahedrons) const;
-	void GenerateConnectionFromTetras(const TArray<FTetrahedron>& Tetrahedrons);
-	void TryCreateConnection(UDungeonRoomData* StartRoom, UDungeonRoomData* EndRoom);
 
 	//Hallway Creation
 	UDungeonHallwayData* FixHallwayCrossingRoom(UDungeonRoomData* Room, const FVector& Start, const FVector& End);
-	bool HasHallwayReachedDestination(const FHallWayPathNode& PathNode, FVector& Out_HitPoint, FVector& Out_HitNormal);
 	void CreateHallwaysFromPath(const TArray<FVector>& Path);
 	
 	//Rendering
@@ -230,12 +216,6 @@ public:
 	float MaxHallwaySlope = 45.0f;
 	UPROPERTY(EditAnywhere, category = "Dungeon Mapper|Generation")
 	EHallwayGenerationMethod HallWayGenerationMethod = EHallwayGenerationMethod::Basic;
-	UPROPERTY(EditAnywhere, category = "Dungeon Mapper|Generation|Physics")
-	float SpringConstant = 1.0f;
-	UPROPERTY(EditAnywhere, category = "Dungeon Mapper|Generation|Physics")
-	float SpringForcePreservation = 1.0f;
-	UPROPERTY(EditAnywhere, category = "Dungeon Mapper|Generation|Physics")
-	float NavBoundsRepulsionForce = 1.0f;
 	UPROPERTY(EditAnywhere, category = "Dungeon Mapper|Generation Data")
 	UDungeonRoomData* RoomData;
 	UPROPERTY(EditAnywhere, category = "Dungeon Mapper|Generation Data")
@@ -243,8 +223,6 @@ public:
 	
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, category = "Dungeon Mapper|Debug")
 	bool bShowRooms;
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, category = "Dungeon Mapper|Debug")
-	bool bShowConnections;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, category = "Dungeon Mapper|Debug")
 	bool bShowHallways;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, category = "Dungeon Mapper|Debug")
@@ -256,10 +234,6 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, category = "Dungeon Mapper|Debug")
 	bool bHallwayToRoomConnection;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, category = "Dungeon Mapper|Debug")
-	bool bApplyNodeRepulsion;
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, category = "Dungeon Mapper|Debug")
-	bool bApplySpringForce;
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, category = "Dungeon Mapper|Debug")
 	TMap<ECorridorType, FColor> HallwayDebugColors;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, category = "Dungeon Mapper|Debug")
 	float TickInterval = 0.0f;
@@ -270,7 +244,6 @@ protected:
 	TArray<UDungeonRoomData*> DungeonNodes;
 	UPROPERTY()
 	TArray<ADungeonRoom*> DungeonRooms;
-	TArray<FDungeonConnection> DungeonConnections;
 	UPROPERTY()
 	TArray<UDungeonHallwayData*> DungeonHallwaysData;
 	FBox DungeonBounds;
@@ -282,13 +255,11 @@ protected:
 	TObjectPtr<UDynamicMeshPool> DynamicMeshPool;
 	FGeometryScriptSimpleCollision DungeonCollision;
 
-	//Collapsing Variables
-	bool bIsCollapsing = false;
-	int32 CollapsingIterationNotModified = 0;
-
 	//HallCreation Variables
 	bool bIsCreatingHallways = false;
-	int32 ConnectionID = 0;
+	int32 RoomIdx = 0;
+	int32 DoorIdx = 0;
+	
 	UPROPERTY()
 	UDungeonHallwayPathFinder* DungeonHallwayPathFinder = nullptr;
 

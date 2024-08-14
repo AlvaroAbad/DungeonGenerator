@@ -657,7 +657,7 @@ UDynamicMesh* UGeometryScriptLibrary_DungeonGenerationFunctions::AppendHallowedB
 
 UDynamicMesh* UGeometryScriptLibrary_DungeonGenerationFunctions::AppendHallwayCorner(UDynamicMesh* TargetMesh,
 	FGeometryScriptPrimitiveOptions PrimitiveOptions, FVector Start, FVector BendPoint, FVector End, float DimensionY,
-	float DimensionZ, float WallThickness, bool OpenEdges,
+	float DimensionZ, float WallThickness, bool OpenEdges, bool OpenTop,
 	UGeometryScriptDebug* Debug)
 {
 	if (TargetMesh == nullptr)
@@ -688,11 +688,11 @@ UDynamicMesh* UGeometryScriptLibrary_DungeonGenerationFunctions::AppendHallwayCo
 	
 	CornerGenerator = FHallWayCornerGenerator();
 	CornerGenerator.EdgeVertices = FIndex3i(0, 0, 0);
-	CornerGenerator.StartPoint = Start;
-	CornerGenerator.BendPoint = BendPoint;
-	CornerGenerator.EndPoint = End;
+	CornerGenerator.StartPoint = Start + FVector::UpVector * (OpenTop ?  WallThickness : 0.0f);;
+	CornerGenerator.BendPoint = BendPoint + FVector::UpVector * (OpenTop ?  WallThickness : 0.0f);;
+	CornerGenerator.EndPoint = End + FVector::UpVector * (OpenTop ?  WallThickness : 0.0f);;
 	CornerGenerator.Width = DimensionY - WallThickness;
-	CornerGenerator.Height = DimensionZ - WallThickness;
+	CornerGenerator.Height = DimensionZ - (OpenTop ?  0.0f : WallThickness);
 	CornerGenerator.Generate();
 
 	UDynamicMesh* BoolMesh = NewObject<UDynamicMesh>();
@@ -713,8 +713,8 @@ UDynamicMesh* UGeometryScriptLibrary_DungeonGenerationFunctions::AppendHallwayCo
 }
 
 UDynamicMesh* UGeometryScriptLibrary_DungeonGenerationFunctions::AppendHallway(UDynamicMesh* TargetMesh,
-                                                                                        FGeometryScriptPrimitiveOptions PrimitiveOptions, FVector Start, FVector End, float DimensionY,
-                                                                                        float DimensionZ, float WallThickness, bool OpenEdges, int32 StepsX, int32 StepsY, int32 StepsZ, UGeometryScriptDebug* Debug)
+                                                                               FGeometryScriptPrimitiveOptions PrimitiveOptions, FVector Start, FVector End, float DimensionY,
+                                                                               float DimensionZ, float WallThickness, bool OpenEdges, bool OpenTop, int32 StepsX, int32 StepsY, int32 StepsZ, UGeometryScriptDebug* Debug)
 {
 	if (TargetMesh == nullptr)
 	{
@@ -740,10 +740,10 @@ UDynamicMesh* UGeometryScriptLibrary_DungeonGenerationFunctions::AppendHallway(U
 	
 	HallwayGenerator = FHallWayGenerator();
 	HallwayGenerator.EdgeVertices = FIndex3i(FMath::Max(0, StepsX), FMath::Max(0, StepsY), FMath::Max(0, StepsZ));
-	HallwayGenerator.StartPoint = Start;
-	HallwayGenerator.EndPoint = End;
+	HallwayGenerator.StartPoint = Start + FVector::UpVector * (OpenTop ?  WallThickness : 0.0f);
+	HallwayGenerator.EndPoint = End + FVector::UpVector * (OpenTop ?  WallThickness : 0.0f);
 	HallwayGenerator.Width = DimensionY - WallThickness;
-	HallwayGenerator.Height = DimensionZ - WallThickness;
+	HallwayGenerator.Height = DimensionZ - (OpenTop ?  0.0f : WallThickness);
 	HallwayGenerator.Generate();
 	
 	UDynamicMesh* BoolMesh = NewObject<UDynamicMesh>();

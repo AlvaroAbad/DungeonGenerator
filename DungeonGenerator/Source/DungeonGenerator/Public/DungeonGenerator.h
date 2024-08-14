@@ -5,7 +5,7 @@
 #include "CoreMinimal.h"
 #include "Modules/ModuleManager.h"
 
-
+#define DIVIDE_BY_2 0.5f
 
 class FDungeonGeneratorModule : public IModuleInterface
 {

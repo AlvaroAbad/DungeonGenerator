@@ -70,6 +70,7 @@ public:
 		float DimensionZ = 100,
 		float WallThickness = 10,
 		bool OpenEdges = true,
+		bool OpenTop = false,
 		UGeometryScriptDebug* Debug = nullptr
 	);
 
@@ -84,7 +85,7 @@ public:
 		float DimensionZ = 100,
 		float WallThickness = 10,
 		bool OpenEdges = true,
-		int32 StepsX = 0,
-		int32 StepsY = 0, int32 StepsZ = 0, UGeometryScriptDebug* Debug = nullptr
+		bool OpenTop = false,
+		int32 StepsX = 0, int32 StepsY = 0, int32 StepsZ = 0, UGeometryScriptDebug* Debug = nullptr
 	);
 };

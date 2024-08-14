@@ -34,14 +34,25 @@ struct FDungeonPathNode
 	bool operator==(const FDungeonPathNode& Other) const
 	{
 		const bool SameLocation = NodeLocation.Equals(Other.NodeLocation);
-		const bool SameMetrics = G == Other.G && F == Other.F;
-		return SameLocation && SameMetrics;
+		
+		return SameLocation;
 	}
 
-	bool operator<(const FDungeonPathNode& Other) const
+	bool operator <(const FDungeonPathNode& Other) const
 	{
 		return F > Other.F;
 	}
+	bool operator <=(const FDungeonPathNode& Other) const
+	{
+		return F >= Other.F;
+	}
+};
+
+struct FPathObstacle
+{
+	FVector Location = FVector::ZeroVector;
+	FVector Extent = FVector::ZeroVector;
+	float AdditionalCost = FLT_MAX;
 };
 
 UCLASS(Abstract)
@@ -53,16 +64,18 @@ public:
 	
 	bool Evaluate();
 	virtual void Debug(float LifeTime = -1.0f);
-private:
+protected:
 	virtual bool HasReachedDestiny(FVector& Out_EndLocation) const;
 	virtual void BuildPath();
 	virtual void GetConnectedNodes(TArray<FDungeonPathNode>& Connections) const {};
 	virtual void FillMetrics(FDungeonPathNode& ForNode, const FDungeonPathNode& PreviousNode);
 public:
 	TArray<FVector> PathResult;
+	TArray<FPathObstacle> Obstacles;
 	
 protected:
 	FVector PathEndLocation;
+	FVector PathStartLocation;
 	TArray<FDungeonPathNode> OpenNodes;
 	TArray<FDungeonPathNode> ClosedNodes;
 	FDungeonPathNode CurrentNode;
@@ -75,9 +88,9 @@ class UDungeonHallwayPathFinder : public UDungeonPathFinder
 public:
 	UDungeonHallwayPathFinder();
 	virtual void Initialize(FVector StartPoint, FVector EndLocation) override;
-	void FillAdditionalValidConnectionDirections(FVector StartPoint, FVector EndLocation);
+	void FillAdditionalValidConnectionDirections();
 	virtual void Debug(float LifeTime = -1.0f) override;
-private:
+protected:
 	virtual bool HasReachedDestiny(FVector& Out_EndLocation) const override;
 	virtual void BuildPath() override;
 	virtual void GetConnectedNodes(TArray<FDungeonPathNode>& Connections) const override;
@@ -85,7 +98,6 @@ private:
 public:
 	TArray<FVector> CoreValidConnectionDirection;
 	TArray<FVector> ValidConnectionDirection;
-	FVector PathStartLocation;
 	FVector StartRoomExtent;
 	FVector EndRoomExtent;
 	float MaxSlopeAngle;
