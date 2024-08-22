@@ -167,24 +167,29 @@ public:
 private:
 	void RunHallwaysCreation();
 	void Debug();
-	FTransform GenerateDoorOnRoomWall(FRandomStream RandomStream, const FVector& RoomSize, const FVector& DoorForward, const FVector& SlidingVector) const;
+	FTransform GenerateDoorOnRoomWall(const FVector& RoomSize, const FVector& DoorForward, const FVector& SlidingVector) const;
 	UFUNCTION(CallInEditor, BlueprintCallable, Category = "Dungeon Mapper|Generators")
 	void GenerateDungeonRooms();
 	UDungeonHallwayData* CreateConnectionFromEdgePoint(UDungeonRoomData* ConnectedRoom, FVector Start, FVector End);
-	void FindNextOrphanDoor();
+	void FindNextOrphanDoor(int32& RoomIdx, int32& DoorIdx);
+	void MergeHallways();
+	void CreateCornerHallways();
 	UFUNCTION(CallInEditor, BlueprintCallable, Category = "Dungeon Mapper|Generators")
 	void CreateHallways();
 	UFUNCTION(CallInEditor, BlueprintCallable, Category = "Dungeon Mapper|Generators")
 	void RenderDungeon();
 	UFUNCTION(CallInEditor, BlueprintCallable, Category = "Dungeon Mapper|Generators")
 	void ClearAll();
+	
 
 	//Room Creation
-	UDungeonRoomData* CreateRoom(FRandomStream& RandomStream);
-
+	UDungeonRoomData* CreateRoom();
+	UDungeonRoomData* CreateRoomOfSize(float RoomXSize, float RoomYSize, float RoomZSize, int32 MinimumNumDoors);
+	void AdjustRoomToDoor(UDungeonRoomData* Room, FDungeonDoor* Door);
+	
 	//Hallway Creation
 	UDungeonHallwayData* FixHallwayCrossingRoom(UDungeonRoomData* Room, const FVector& Start, const FVector& End);
-	void CreateHallwaysFromPath(const TArray<FVector>& Path);
+	void SimplifyHallways();
 	
 	//Rendering
 	void RenderHallWays(UDynamicMesh* DynMesh, const UDungeonHallwayData* DungeonHallway);
@@ -254,13 +259,16 @@ protected:
 	UPROPERTY(Transient)
 	TObjectPtr<UDynamicMeshPool> DynamicMeshPool;
 	FGeometryScriptSimpleCollision DungeonCollision;
-
+	FRandomStream RandomStream;
+	
 	//HallCreation Variables
 	bool bIsCreatingHallways = false;
-	int32 RoomIdx = 0;
-	int32 DoorIdx = 0;
-	
-	UPROPERTY()
+	TArray<FDungeonDoor*> DoorsToconnect;
+	int32 StartDoorIdx = 0;
+	int32 EndDoorIdx = 0;
+	FDungeonDoor* ConnectingStartDoor = nullptr;
+	FDungeonDoor* ConnectingEndDoor = nullptr;
+	UPROPERTY(Transient)
 	UDungeonHallwayPathFinder* DungeonHallwayPathFinder = nullptr;
 
 };

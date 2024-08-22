@@ -14,6 +14,7 @@ enum class ERoomType : uint8
 	Starting,
 	Mid,
 	End,
+	Hallway,
 	Dummy,
 };
 
@@ -42,7 +43,8 @@ public:
 	ERoomType RoomType = ERoomType::Mid;
 	TArray<const FDungeonConnection*> Connections;
 	TArray<FDungeonDoor> Doors;
-
+	TArray<FBox> SubtractiveElements;
+	
 	FVector Velocity = FVector::ZeroVector;
 	FVector PrevLocation = FVector::ZeroVector;
 	UPROPERTY(EditDefaultsOnly)
@@ -64,6 +66,7 @@ struct FDungeonDoor
 	GENERATED_BODY()
 	FTransform Transform = FTransform::Identity;
 	UDungeonRoomData* ConnectingRoom[2]{nullptr, nullptr};
+	bool IsValid = true;
 	FDungeonDoor()
 	{}
 	

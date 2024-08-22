@@ -34,6 +34,7 @@ void ADungeonRoom::InitializeRoom(const UDungeonRoomData* Node)
 	MaterialList.Add(Node->WallMaterial);
 	
 	FGeometryScriptPrimitiveOptions PrimitiveOptions;
+	//Main room box
 	MainDynMesh = UGeometryScriptLibrary_MeshPrimitiveFunctions::AppendBox
 	(
 	MainDynMesh
@@ -45,16 +46,48 @@ void ADungeonRoom::InitializeRoom(const UDungeonRoomData* Node)
 		, Node->Extent.X*2.0f/125 + 1, Node->Extent.Y*2.0f/125 + 1, Node->Extent.Z*2.0f/125 + 1
 		, EGeometryScriptPrimitiveOriginMode::Center
 	);
+
+	//Apply Substractives
+	for (const FBox& SubtractiveElement : Node->SubtractiveElements)
+	{
+		FBox ExpandedSubtractive = SubtractiveElement.ExpandBy(0.1f);
+		UDynamicMesh* SubtractiveMesh = AllocateComputeMesh();
+		FTransform SubtractiveTransform = FTransform(ExpandedSubtractive.GetCenter()).GetRelativeTransform(GetActorTransform());
+		FVector Size = ExpandedSubtractive.GetSize();
+		SubtractiveMesh = UGeometryScriptLibrary_MeshPrimitiveFunctions::AppendBox
+		(
+		SubtractiveMesh
+			, PrimitiveOptions
+			, SubtractiveTransform
+			, Size.X
+			,Size.Y
+			,  Size.Z
+			, Size.X * 2.0f/125 + 1, Size.Y * 2.0f/125 + 1, Size.Z * 2.0f/125 + 1
+			, EGeometryScriptPrimitiveOriginMode::Center
+		);
+		FGeometryScriptMeshBooleanOptions BoolOptions;
+		MainDynMesh = UGeometryScriptLibrary_MeshBooleanFunctions::ApplyMeshBoolean
+		(
+			MainDynMesh,
+			 FTransform::Identity,
+			SubtractiveMesh,
+			 FTransform::Identity,
+			EGeometryScriptBooleanOperation::Subtract,
+			BoolOptions		
+		);
+		ReleaseComputeMesh(SubtractiveMesh);
+	}
 	
 	const FTransform FloorLocation(FVector::ZeroVector - FVector(0,0,Node->Extent.Z - Node->WallThickness * 0.5f));
-	FKBoxElem FloorShape(Node->Extent.X, Node->Extent.Y, Node->WallThickness);
+	FKBoxElem FloorShape(Node->Extent.X*2.0f, Node->Extent.Y*2.0f, Node->WallThickness);
 	FloorShape.SetTransform(FloorLocation);
 	DungeonCollision.AggGeom.BoxElems.Add(FloorShape);
 
-	// FGeometryScriptMergeSimpleCollisionOptions MergeOptions;
-	// bool bHasMerged = false;
-	// DungeonCollision = UGeometryScriptLibrary_CollisionFunctions::MergeSimpleCollisionShapes(DungeonCollision, MergeOptions, bHasMerged);
-	// UGeometryScriptLibrary_CollisionFunctions::SetSimpleCollisionOfDynamicMeshComponent(DungeonCollision, DynamicMeshComponent, Options);
+	FGeometryScriptMergeSimpleCollisionOptions MergeOptions;
+	FGeometryScriptSetSimpleCollisionOptions Options;
+	bool bHasMerged = false;
+	DungeonCollision = UGeometryScriptLibrary_CollisionFunctions::MergeSimpleCollisionShapes(DungeonCollision, MergeOptions, bHasMerged);
+	UGeometryScriptLibrary_CollisionFunctions::SetSimpleCollisionOfDynamicMeshComponent(DungeonCollision, DynamicMeshComponent, Options);
 
 	//make space inside
 	UDynamicMesh* ToolMesh = AllocateComputeMesh();
@@ -69,6 +102,37 @@ void ADungeonRoom::InitializeRoom(const UDungeonRoomData* Node)
 		, Node->Extent.X*2.0f/125 + 1, Node->Extent.Y*2.0f/125 + 1, Node->Extent.Z*2.0f/125 + 1
 		, EGeometryScriptPrimitiveOriginMode::Center
 	);
+	
+	//Apply Substractives
+	for (const FBox& SubtractiveElement : Node->SubtractiveElements)
+	{
+		FBox ExpandedSubtractive = SubtractiveElement.ExpandBy(Node->WallThickness);
+		UDynamicMesh* SubtractiveMesh = AllocateComputeMesh();
+	FTransform SubtractiveTransform = FTransform(ExpandedSubtractive.GetCenter()).GetRelativeTransform(GetActorTransform());
+		FVector Size = ExpandedSubtractive.GetSize();
+		SubtractiveMesh = UGeometryScriptLibrary_MeshPrimitiveFunctions::AppendBox
+		(
+		SubtractiveMesh
+			, PrimitiveOptions
+			, SubtractiveTransform*FTransform(FVector::UpVector*Node->WallThickness)
+			, Size.X
+			,Size.Y
+			,  Size.Z
+			, Size.X * 2.0f/125 + 1, Size.Y * 2.0f/125 + 1, Size.Z * 2.0f/125 + 1
+			, EGeometryScriptPrimitiveOriginMode::Center
+		);
+		FGeometryScriptMeshBooleanOptions BoolOptions;
+		ToolMesh = UGeometryScriptLibrary_MeshBooleanFunctions::ApplyMeshBoolean
+		(
+			ToolMesh		,
+			 FTransform::Identity,
+			SubtractiveMesh,
+			 FTransform::Identity,
+			EGeometryScriptBooleanOperation::Subtract,
+			BoolOptions		
+		);
+		ReleaseComputeMesh(SubtractiveMesh);
+	}
 	
 	FGeometryScriptMeshBooleanOptions BoolOptions;
 	MainDynMesh = UGeometryScriptLibrary_MeshBooleanFunctions::ApplyMeshBoolean

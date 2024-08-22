@@ -81,24 +81,24 @@ void UDungeonPathFinder::FillMetrics(FDungeonPathNode& ForNode, const FDungeonPa
 }
 
 UDungeonHallwayPathFinder::UDungeonHallwayPathFinder()
-	: Super()
+	: Super(), MaxSlopeAngle(0), HallWaySegmentLength(0)
 {
 	CoreValidConnectionDirection.Add(FVector::ForwardVector);
 	CoreValidConnectionDirection.Add(FVector::BackwardVector);
 	CoreValidConnectionDirection.Add(FVector::RightVector);
 	CoreValidConnectionDirection.Add(FVector::LeftVector);
 }
+
 void UDungeonHallwayPathFinder::Initialize(FVector StartPoint, FVector EndLocation)
 {
 	OpenNodes.Empty();
 	ClosedNodes.Empty();
+	PathResult.Empty();
 	PathStartLocation = StartPoint;
 	PathEndLocation = EndLocation;
-		
+	
 	OpenNodes.Add(FDungeonPathNode(StartPoint));
-	OpenNodes.Last().G = 0;
-	OpenNodes.Last().H = FVector::DistSquared(PathEndLocation, OpenNodes.Last().NodeLocation);
-	OpenNodes.Last().F = OpenNodes.Last().G + OpenNodes.Last().H;
+	FillMetrics(OpenNodes.Last(), FDungeonPathNode());
 }
 
 void UDungeonHallwayPathFinder::Debug(float LifeTime)
@@ -146,84 +146,36 @@ bool UDungeonHallwayPathFinder::HasReachedDestiny(FVector& Out_EndLocation) cons
 	const FVector SegmentNormal = Segment.GetSafeNormal();
 	const FVector NegatedDirection(!Segment.GetSafeNormal().X, !Segment.GetSafeNormal().Y, !Segment.GetSafeNormal().Z);
 	const FVector MidPoint = (Segment) * DIVIDE_BY_2 + SegmentStart;
-	const FVector HallwayExtent = (Segment + NegatedDirection * HallWaySegmentLength) * DIVIDE_BY_2;
-	const FBox HalwaySegmentBox(MidPoint - HallwayExtent, MidPoint + HallwayExtent);
+	const FVector HallwayExtent = (Segment.GetAbs() + NegatedDirection * HallWaySegmentLength) * DIVIDE_BY_2;
+	const FBox HalwaySegmentBox(MidPoint - (HallwayExtent + 1.0f), MidPoint + (HallwayExtent + 1.0f));
 	DrawDebugBox(GetWorld(), HalwaySegmentBox.GetCenter(), HalwaySegmentBox.GetExtent(), FColor::Emerald, false, 1.0f);
 	if(HalwaySegmentBox.IsInsideOrOn(PathEndLocation))
 	{
 		const FVector SegmentStartToPathEnd = PathEndLocation - SegmentStart;
-		const float Dot = FVector::DotProduct(Segment, SegmentStartToPathEnd);
+		const float Dot = FVector::DotProduct(SegmentStartToPathEnd, Segment.GetSafeNormal());
 		Out_EndLocation = SegmentStart + SegmentNormal * Dot;
 		return true;
 	}
 	
 	return false;
-	// Out_EndLocation = FVector::ZeroVector;
-	// if(CurrentNode.Path.Num() < 2)
-	// {
-	// 	return false;
-	// }
-	//
-	// FBox Room = FBox(PathEndLocation - (EndRoomExtent+FVector(HallWaySegmentLength, HallWaySegmentLength, 0)), PathEndLocation + (EndRoomExtent+FVector(HallWaySegmentLength, HallWaySegmentLength, 0)));
-	// if(Room.IsInside(CurrentNode.Path.Last(1)))
-	// {
-	// 	return false;
-	// }
-	//
-	// for (int i = 0; i < 4; ++i)
-	// {
-	// 	FPlane PlaneToCheck(PathEndLocation + CoreValidConnectionDirection[i]*(EndRoomExtent+HallWaySegmentLength), CoreValidConnectionDirection[i]);
-	//
-	// 	const bool PlaneIntersecting = FMath::SegmentPlaneIntersection(CurrentNode.Path.Last(1), CurrentNode.NodeLocation, PlaneToCheck, Out_EndLocation);
-	//
-	// 	FVector NegatedDirection(!CoreValidConnectionDirection[i].X, !CoreValidConnectionDirection[i].Y, 0);
-	// 	FVector2D PlaneSize(NegatedDirection.GetAbs()*EndRoomExtent);
-	// 	PlaneSize.X = (PlaneSize.X != 0 ? PlaneSize.X : PlaneSize.Y) - HallWaySegmentLength;
-	// 	PlaneSize.Y = EndRoomExtent.Z;
-	// 	DrawDebugSolidPlane(GetWorld(),PlaneToCheck,  PathEndLocation + CoreValidConnectionDirection[i]*EndRoomExtent, PlaneSize, FColor::Red, false);
-	//
-	// 	if(PlaneIntersecting)
-	// 	{
-	// 		const FVector RoomExpansion = EndRoomExtent + CoreValidConnectionDirection[i].GetAbs() * HallWaySegmentLength - NegatedDirection * HallWaySegmentLength;
-	// 		Room = FBox(PathEndLocation - RoomExpansion, PathEndLocation + RoomExpansion);
-	// 		if(Room.IsInsideOrOn(Out_EndLocation))
-	// 		{
-	// 			DrawDebugSolidPlane(GetWorld(),PlaneToCheck,  PathEndLocation + CoreValidConnectionDirection[i]*EndRoomExtent, PlaneSize, FColor::Red, true);
-	// 			DrawDebugPoint(GetWorld(), Out_EndLocation, 10.0f, FColor::Green, true);
-	// 			//Out_EndLocation += (-CoreValidConnectionDirection[i])*HallWaySegmentLength;
-	// 			return true;
-	// 		}
-	// 	}
-	// }
-	//
-	// return false;
+
 }
 
 void UDungeonHallwayPathFinder::BuildPath()
 {
 	Super::BuildPath();
-	return;
-	// TArray<FVector> FinalPath;
-	// const FBox StartRoom = FBox(PathStartLocation - StartRoomExtent, PathStartLocation + StartRoomExtent);
-	// FinalPath.Add(StartRoom.GetClosestPointTo(CurrentNode.Path[0]));
-	// for (int i = 0; i < CurrentNode.Path.Num() - 1; i = i + 2)
-	// {
-	// 	FinalPath.Add(CurrentNode.Path[i]);
-	// }
-	// FinalPath.Add(CurrentNode.Path.Last());
-	//
-	// FBox EndRoom = FBox(PathEndLocation - (EndRoomExtent), PathEndLocation + EndRoomExtent);
-	// FinalPath.Add(EndRoom.GetClosestPointTo(CurrentNode.Path.Last()));
-	// PathResult = FinalPath;
+	PathResult.Add(PathEndLocation);
 }
 
 void UDungeonHallwayPathFinder::GetConnectedNodes(TArray<FDungeonPathNode>& Connections) const
 {
 	Connections.Empty();
 	FVector CurrentLocation = CurrentNode.NodeLocation;
+	FVector PrevLocation = CurrentNode.Path.Num() > 1 ? CurrentNode.Path.Last(1) : CurrentNode.NodeLocation;
+	
 	const bool CurrentlyInsideObstacle = Obstacles.ContainsByPredicate([&CurrentLocation](const FPathObstacle& Obstacle)
 		{
-			FBox ObstacleBox(Obstacle.Location - Obstacle.Extent, Obstacle.Location + Obstacle.Extent);
+			FBox ObstacleBox(Obstacle.Location - (Obstacle.Extent - 1.0f), Obstacle.Location + (Obstacle.Extent - 1.0f));
 			return ObstacleBox.IsInside(CurrentLocation);
 		});
 	if(CurrentlyInsideObstacle)
@@ -231,84 +183,96 @@ void UDungeonHallwayPathFinder::GetConnectedNodes(TArray<FDungeonPathNode>& Conn
 		return;
 	}
 
-	FVector AproachDirection =  CurrentNode.Path.Num() > 1 ? (CurrentNode.NodeLocation - CurrentNode.Path.Last(1)).GetSafeNormal() : FVector::ZeroVector;
-	for (int i = 0; i < CoreValidConnectionDirection.Num(); ++i)
+	Algo::Sort(Obstacles, [&CurrentLocation, &PrevLocation ](const FPathObstacle& A, const FPathObstacle& B)
 	{
-		if(CoreValidConnectionDirection[i].Equals(-AproachDirection))
-		{
-			continue;
-		}
-		const FVector StartPoint = CurrentNode.NodeLocation;
-		const FVector ValidDirection = StartPoint + CoreValidConnectionDirection[i] * (HallWaySegmentLength * DIVIDE_BY_2);
-		const bool DirectionEntersObstacle = Obstacles.ContainsByPredicate([&](const FPathObstacle& Obstacle)
-		{
-			FBox ObstacleBox(Obstacle.Location - Obstacle.Extent, Obstacle.Location + Obstacle.Extent);
+		bool DontSwap = false;
+		const FBox ObstacleA(A.Location - A.Extent, A.Location + A.Extent);
+		const FBox ObstacleB(B.Location - B.Extent, B.Location + B.Extent);
+		const FVector ClosestPointToA = ObstacleA.GetClosestPointTo(CurrentLocation);
+		const FVector ClosestPointToB = ObstacleB.GetClosestPointTo(CurrentLocation);
+		const FVector LastSegment = (CurrentLocation - PrevLocation).GetSafeNormal();
+		const FVector CurrentToClosestA = ClosestPointToA - CurrentLocation;
+		const FVector CurrentToClosestB = ClosestPointToB - CurrentLocation;
+		const float DistA = CurrentToClosestA.SizeSquared();
+		const float DistB = CurrentToClosestB.SizeSquared();
 
-			const FVector SegmentNormal = CoreValidConnectionDirection[i];
-			const FVector Segment = SegmentNormal * (HallWaySegmentLength * DIVIDE_BY_2);
-			const FVector NegatedDirection = UDungeonGenerationHelperFunctions::NegateUnitVector(SegmentNormal);
-			const FVector MidPoint = StartPoint + Segment * DIVIDE_BY_2;
-			const FVector HallwayExtent = (Segment.GetAbs() + NegatedDirection * HallWaySegmentLength) * DIVIDE_BY_2;
-			const FBox HalwaySegmentBox(MidPoint - (HallwayExtent - 1.0f), MidPoint + (HallwayExtent - 1.0f));
-			
-			return ObstacleBox.Intersect(HalwaySegmentBox);
-		});
-		if(DirectionEntersObstacle)
+		if( FMath::IsNearlyEqual(DistA,DistB, 0.001f))
 		{
-			continue;
+			DontSwap = CurrentToClosestA.GetSafeNormal().Equals(LastSegment) || !CurrentToClosestB.GetSafeNormal().Equals(LastSegment);
 		}
-		Connections.Add(FDungeonPathNode(CurrentNode, ValidDirection));
+		else
+		{
+			DontSwap = DistA < DistB;
+		}
+		
+		return  DontSwap;
+	});
+
+	const FPathObstacle& ClosestObstacle = Obstacles[0];
+	const FBox ObstacleBox(ClosestObstacle.Location - ClosestObstacle.Extent, ClosestObstacle.Location + ClosestObstacle.Extent);
+	if(ObstacleBox.IsInsideOrOn(CurrentLocation))
+	{
+		for (int i = 0; i < CoreValidConnectionDirection.Num(); ++i)
+		{
+			const FVector ValidNextPoint = CurrentLocation + CoreValidConnectionDirection[i] * (HallWaySegmentLength * DIVIDE_BY_2);
+			if(ObstacleBox.IsInsideOrOn(ValidNextPoint))
+			{
+				continue;
+			}
+			Connections.Add(FDungeonPathNode(CurrentNode, ValidNextPoint));
+		}
+	}
+	else
+	{
+		FVector CurrentToEnd = PathEndLocation - CurrentLocation;
+		FVector LastPathDirection = (CurrentLocation - PrevLocation).GetSafeNormal();
+		LastPathDirection = UDungeonGenerationHelperFunctions::RoundToUnitVector(LastPathDirection);
+		FVector LastPathRightVector = FVector::CrossProduct(LastPathDirection.GetSafeNormal(), FVector::UpVector);
+		FVector NegatedLastPathRightVector = UDungeonGenerationHelperFunctions::NegateUnitVector(LastPathRightVector);
+		float Dot = FVector::DotProduct(CurrentToEnd.GetSafeNormal(), LastPathRightVector.GetSafeNormal());
+
+		FVector PathDirection = LastPathRightVector;
+		for (int i = 0; i < 2; ++i)
+		{
+			FVector CornerPoint =  PathDirection * ClosestObstacle.Extent;
+			CornerPoint = CurrentLocation * NegatedLastPathRightVector + CornerPoint + (ClosestObstacle.Location * PathDirection);
+
+			float DoorToCornerDistance = FVector::Dist(CornerPoint, CurrentLocation) + HallWaySegmentLength * DIVIDE_BY_2;
+			CornerPoint = CurrentLocation + PathDirection * DoorToCornerDistance;
+
+			const bool CrossesObstacle = Obstacles.ContainsByPredicate([&](const FPathObstacle& Obstacle)
+					{
+						FBox ObstacleBox(Obstacle.Location - Obstacle.Extent, Obstacle.Location + Obstacle.Extent);
+
+						const FVector SegmentStart = CornerPoint;
+						const FVector SegmentEnd = CurrentLocation;
+						const FVector Segment = SegmentEnd - SegmentStart;
+						const FVector NegatedDirection(!Segment.GetSafeNormal().X, !Segment.GetSafeNormal().Y, !Segment.GetSafeNormal().Z);
+						const FVector MidPoint = (Segment) * DIVIDE_BY_2 + SegmentStart;
+						const FVector HallwayExtent = (Segment.GetAbs() + NegatedDirection * HallWaySegmentLength) * DIVIDE_BY_2;
+						const FBox HallwaySegmentBox(MidPoint - (HallwayExtent - 1.0f), MidPoint + (HallwayExtent - 1.0f));
+
+						FBox OverlappingBox = ObstacleBox.Overlap(HallwaySegmentBox);
+						
+						if(!OverlappingBox.IsValid)
+						{
+							return false;
+						}
+						OverlappingBox = OverlappingBox.ExpandBy(HallWaySegmentLength * DIVIDE_BY_2);
+						FVector HitNormal = FVector::ZeroVector;
+						float HitTime = 0.0f;
+						const bool Hit = FMath::LineExtentBoxIntersection(OverlappingBox, CurrentLocation, CornerPoint, FVector::ZeroVector, CornerPoint, HitNormal, HitTime);
+						return Hit && HitTime > 0.0f;
+					});
+
+			Connections.Add(FDungeonPathNode(CurrentNode,CornerPoint));
+			PathDirection *=-1;
+		}
 	}
 	
-	for (int i = 0; i < ValidConnectionDirection.Num(); ++i)
-	{
-		if(ValidConnectionDirection[i].Equals(-AproachDirection))
-		{
-			continue;
-		}
-		const FVector StartPoint = CurrentNode.NodeLocation;
-		const FVector ValidDirection = StartPoint + ValidConnectionDirection[i] * (HallWaySegmentLength * DIVIDE_BY_2);
-		const bool DirectionEntersObstacle = Obstacles.ContainsByPredicate([&](const FPathObstacle& Obstacle)
-		{
-			FBox ObstacleBox(Obstacle.Location - Obstacle.Extent, Obstacle.Location + Obstacle.Extent);
-
-			const FVector SegmentNormal = CoreValidConnectionDirection[i];
-			const FVector Segment = SegmentNormal * (HallWaySegmentLength * DIVIDE_BY_2);
-			const FVector NegatedDirection = UDungeonGenerationHelperFunctions::NegateUnitVector(SegmentNormal);
-			const FVector MidPoint =  StartPoint + Segment * DIVIDE_BY_2;
-			const FVector HallwayExtent = (Segment.GetAbs()  + NegatedDirection * HallWaySegmentLength) * DIVIDE_BY_2;
-			const FBox HalwaySegmentBox(MidPoint - HallwayExtent, MidPoint + HallwayExtent);
-			
-			return ObstacleBox.Intersect(HalwaySegmentBox);
-		});
-		if(DirectionEntersObstacle)
-		{
-			continue;
-		}
-		Connections.Add(FDungeonPathNode(CurrentNode, ValidDirection));
-	}
 }
 
 void UDungeonHallwayPathFinder::FillMetrics(FDungeonPathNode& ForNode, const FDungeonPathNode& PreviousNode)
 {
 	Super::FillMetrics(ForNode, PreviousNode);
-	return;
-	// FBox EndRoom = FBox(PathEndLocation - (EndRoomExtent), PathEndLocation + EndRoomExtent);
-	//
-	// //F,B,L,R
-	// FVector ClosesPoint = FVector::ZeroVector;
-	// float ClosestDistance = FLT_MAX;
-	// for (int i = 0; i < 4; ++i)
-	// {
-	// 	FVector ExitPoint =  PathEndLocation + CoreValidConnectionDirection[i] * EndRoomExtent;
-	// 	float Distance = FVector::Dist(ForNode.NodeLocation, ExitPoint);
-	// 	if(ClosestDistance > Distance)
-	// 	{
-	// 		ClosesPoint = ExitPoint;
-	// 	}
-	// }
-	//
-	// ForNode.G = PreviousNode.G + FVector::DistSquared(PreviousNode.NodeLocation, ForNode.NodeLocation) + ForNode.Path.Num();
-	// ForNode.H = FVector::DistSquared(ClosesPoint, ForNode.NodeLocation);
-	// ForNode.F = ForNode.G + ForNode.H;
 }

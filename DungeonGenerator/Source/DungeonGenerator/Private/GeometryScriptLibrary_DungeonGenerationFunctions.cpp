@@ -691,7 +691,7 @@ UDynamicMesh* UGeometryScriptLibrary_DungeonGenerationFunctions::AppendHallwayCo
 	CornerGenerator.StartPoint = Start + FVector::UpVector * (OpenTop ?  WallThickness : 0.0f);;
 	CornerGenerator.BendPoint = BendPoint + FVector::UpVector * (OpenTop ?  WallThickness : 0.0f);;
 	CornerGenerator.EndPoint = End + FVector::UpVector * (OpenTop ?  WallThickness : 0.0f);;
-	CornerGenerator.Width = DimensionY - WallThickness;
+	CornerGenerator.Width = DimensionY - (WallThickness * 2);
 	CornerGenerator.Height = DimensionZ - (OpenTop ?  0.0f : WallThickness);
 	CornerGenerator.Generate();
 
@@ -742,7 +742,7 @@ UDynamicMesh* UGeometryScriptLibrary_DungeonGenerationFunctions::AppendHallway(U
 	HallwayGenerator.EdgeVertices = FIndex3i(FMath::Max(0, StepsX), FMath::Max(0, StepsY), FMath::Max(0, StepsZ));
 	HallwayGenerator.StartPoint = Start + FVector::UpVector * (OpenTop ?  WallThickness : 0.0f);
 	HallwayGenerator.EndPoint = End + FVector::UpVector * (OpenTop ?  WallThickness : 0.0f);
-	HallwayGenerator.Width = DimensionY - WallThickness;
+	HallwayGenerator.Width = DimensionY - (WallThickness * 2.0f);
 	HallwayGenerator.Height = DimensionZ - (OpenTop ?  0.0f : WallThickness);
 	HallwayGenerator.Generate();
 	
